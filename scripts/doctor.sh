@@ -45,6 +45,7 @@ BOT_USERNAME="$(get BOT_USERNAME)"
 PUBLIC_URL="$(get PUBLIC_URL)"
 DOMAIN="$(get DOMAIN)"
 USE_WEBHOOK="$(get USE_WEBHOOK)"
+PROXY="$(get PROXY)"; [ -n "$PROXY" ] || PROXY="$([ -n "$DOMAIN" ] && echo caddy || echo none)"
 APP_PORT="$(get APP_PORT)"; APP_PORT="${APP_PORT:-3000}"
 
 [ -n "$BOT_TOKEN" ] && ok "токен в .env есть (…${BOT_TOKEN: -6})" || bad "BOT_TOKEN в .env пуст"
@@ -70,7 +71,7 @@ else
       fix "cd $DIR && $SUDO docker compose up -d --build"
     fi
   fi
-  if [ -n "$DOMAIN" ] && ! printf '%s' "$PS" | grep -qiE 'caddy.*(running|up)'; then
+  if [ "$PROXY" = "caddy" ] && ! printf '%s' "$PS" | grep -qiE 'caddy.*(running|up)'; then
     bad "Caddy не запущен, а домен задан — HTTPS не работает"
     fix "cd $DIR && $SUDO docker compose --profile tls up -d"
   fi
@@ -195,12 +196,36 @@ if [ -n "$DOMAIN" ]; then
     ok "домен указывает на этот сервер"
   fi
 
+  if [ "$PROXY" = "nginx" ]; then
+    if pgrep -x nginx >/dev/null 2>&1; then ok "nginx запущен"; else bad "nginx не запущен"; fix "$SUDO systemctl start nginx"; fi
+    NGCONF="$($SUDO grep -rl "server_name .*$DOMAIN" /etc/nginx 2>/dev/null | head -1)"
+    if [ -n "$NGCONF" ]; then
+      ok "сайт $DOMAIN описан в $NGCONF"
+      $SUDO grep -q "listen 443" "$NGCONF" 2>/dev/null && ok "HTTPS в конфиге есть" || {
+        bad "в конфиге нет 443 — сертификат не выпущен"
+        fix "$SUDO certbot --nginx -d $DOMAIN"; }
+    else
+      bad "в nginx нет сайта для $DOMAIN"
+      fix "перезапустите установку: bash $DIR/scripts/deploy.sh"
+    fi
+    if curl -fsS --max-time 5 "http://127.0.0.1:$APP_PORT/healthz" >/dev/null 2>&1; then
+      ok "приложение слушает 127.0.0.1:$APP_PORT — nginx до него достучится"
+    else
+      bad "на 127.0.0.1:$APP_PORT никто не отвечает — nginx получит 502"
+      fix "cd $DIR && $SUDO docker compose up -d"
+    fi
+  fi
+
   for port in 80 443; do
     if ($SUDO ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ":$port "; then
       ok "порт $port слушается"
     else
-      bad "порт $port не слушается — Caddy не поднялся"
-      fix "cd $DIR && $SUDO docker compose --profile tls up -d && $SUDO docker compose logs --tail=30 caddy"
+      bad "порт $port не слушается — панель снаружи недоступна"
+      if [ "$PROXY" = "nginx" ]; then
+        fix "$SUDO systemctl status nginx"
+      else
+        fix "cd $DIR && $SUDO docker compose --profile tls up -d && $SUDO docker compose logs --tail=30 caddy"
+      fi
     fi
   done
 
@@ -209,7 +234,12 @@ if [ -n "$DOMAIN" ]; then
   else
     bad "https://$DOMAIN/healthz не отвечает снаружи"
     fix "откройте порты в файрволе провайдера и на сервере: $SUDO ufw allow 80/tcp && $SUDO ufw allow 443/tcp"
-    fix "логи Caddy: cd $DIR && $SUDO docker compose logs --tail=30 caddy"
+    if [ "$PROXY" = "nginx" ]; then
+      fix "проверьте сертификат и конфиг: $SUDO certbot --nginx -d $DOMAIN && $SUDO nginx -t"
+      fix "ошибки nginx: $SUDO tail -30 /var/log/nginx/error.log"
+    else
+      fix "логи Caddy: cd $DIR && $SUDO docker compose logs --tail=30 caddy"
+    fi
   fi
 fi
 

@@ -109,6 +109,11 @@ npm run dev       # автоперезапуск при изменениях
 curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh | bash
 ```
 
+Скрипт сам разберётся, как отдавать панель наружу: если порты 80 и 443 свободны —
+поднимет Caddy с автоматическим HTTPS; если на сервере уже работает **nginx** —
+добавит ему сайт и попросит сертификат у certbot; если домена нет — поднимет панель
+по IP на первом свободном порту. Занятые чужими проектами порты не трогает.
+
 Скрипт сам спросит всё, что нужно:
 
 - **токен бота** от [@BotFather](https://t.me/BotFather) — сразу проверяется через Telegram,
@@ -132,7 +137,8 @@ curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/ch
   -o deploy.sh && bash deploy.sh --token 8123456789:AAH... --domain kopeyka.mysite.ru
 ```
 
-Опции: `--anthropic-key`, `--currency USD`, `--tz-offset 180`, `--port 8080`, `--dir /srv/kopeyka`
+Опции: `--proxy caddy|nginx|none`, `--anthropic-key`, `--currency USD`, `--tz-offset 180`,
+`--port 8080`, `--dir /srv/kopeyka`
 (`--help` — полный список). Повторный запуск той же команды = обновление: база и секреты
 сохраняются. Логи — `cd /opt/kopeyka && docker compose logs -f app`.
 

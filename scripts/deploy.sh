@@ -4,15 +4,13 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh | bash
 #
-# Без аргументов скрипт спрашивает всё сам: токен бота, домен, валюту,
-# часовой пояс и ключ для распознавания чеков. Дальше ставит Docker
-# (если его нет), забирает код, генерирует секреты, поднимает бота и панель
-# и выпускает HTTPS-сертификат.
+# Без аргументов спрашивает всё сам: токен бота, домен, валюту, часовой пояс
+# и ключ для распознавания чеков. Сам разбирается, свободен ли сервер:
+#   • порты 80/443 свободны        → поднимает Caddy с автоматическим HTTPS;
+#   • на сервере уже работает nginx → добавляет ему сайт и просит сертификат у certbot;
+#   • домена нет                    → панель по IP на свободном порту.
 #
-# Для автоматизации те же значения можно передать флагами — тогда вопросов не будет:
-#   ... | bash -s -- --token 123:AA... --domain kopeyka.mysite.ru
-#
-# Повторный запуск = обновление: база и секреты сохраняются.
+# Повторный запуск = обновление: база, настройки и секреты сохраняются.
 set -euo pipefail
 
 REPO_URL="${KOPEYKA_REPO:-https://github.com/alijon26062006-bit/ali.me.git}"
@@ -26,8 +24,10 @@ DOMAIN="${DOMAIN:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 CURRENCY="${DEFAULT_CURRENCY:-UZS}"
 TZ_OFFSET="${DEFAULT_TZ_OFFSET:-300}"
-APP_PORT="${APP_PORT:-3000}"
+APP_PORT="${APP_PORT:-}"
+PROXY="${PROXY:-}"            # caddy | nginx | none
 TOKEN_FROM_FLAG=0
+PROXY_FROM_FLAG=0
 
 say()  { printf '\033[1;32m▸\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
@@ -43,12 +43,14 @@ usage() {
 Опции:
   --token TOKEN        токен бота от @BotFather
   --domain DOMAIN      домен панели; включает HTTPS и вебхук
-                       (без него — панель на http://IP:PORT, бот на long polling)
+  --proxy caddy|nginx|none
+                       чем отдавать панель наружу (по умолчанию определяется само:
+                       nginx — если он уже занимает порты 80/443, иначе caddy)
   --username NAME      имя бота без @ (обычно определяется само по токену)
   --anthropic-key KEY  включить распознавание чеков по фото
   --currency CODE      базовая валюта (по умолчанию UZS)
   --tz-offset MINUTES  часовой пояс в минутах от UTC (по умолчанию 300 = UTC+5)
-  --port PORT          порт приложения без домена (по умолчанию 3000)
+  --port PORT          порт приложения (по умолчанию первый свободный с 3000)
   --dir PATH           куда установить (по умолчанию /opt/kopeyka)
   --branch NAME        ветка репозитория
 USAGE
@@ -58,6 +60,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --token)          BOT_TOKEN="${2:-}"; TOKEN_FROM_FLAG=1; shift 2 ;;
     --domain)         DOMAIN="${2:-}"; shift 2 ;;
+    --proxy)          PROXY="${2:-}"; PROXY_FROM_FLAG=1; shift 2 ;;
     --username)       BOT_USERNAME="${2:-}"; shift 2 ;;
     --anthropic-key)  ANTHROPIC_API_KEY="${2:-}"; shift 2 ;;
     --currency)       CURRENCY="${2:-}"; shift 2 ;;
@@ -77,6 +80,21 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 run() { if [ "$DRY_RUN" = "1" ]; then echo "  [dry-run] $*"; else $SUDO "$@"; fi; }
+
+# ── порты: кто занят и кем ───────────────────────────────────────────────────
+listeners() { $SUDO ss -ltnp 2>/dev/null || $SUDO netstat -ltnp 2>/dev/null || true; }
+port_busy() {
+  listeners | grep -q ":$1 " && return 0
+  # запасная проверка, если в системе нет ss и netstat
+  (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3<&-; return 0; }
+  return 1
+}
+port_owner() { listeners | grep ":$1 " | grep -oE '"[A-Za-z0-9_.-]+"' | head -1 | tr -d '"'; }
+pick_port() {
+  local port="${1:-3000}"
+  while port_busy "$port"; do port=$((port + 1)); done
+  printf '%s' "$port"
+}
 
 # ── вопросы задаём в терминал напрямую, чтобы работало и через curl | bash ──
 TTY_OPEN=0
@@ -104,8 +122,7 @@ looks_like_placeholder() {
   case "$1" in *'<'*|*'>'*|*ТОКЕН*|*TOKEN*|*ВАШ*|*ваш*|*your*|*YOUR*|*example.com|*example.org|*домен*) return 0 ;; esac
   return 1
 }
-
-valid_token() { printf '%s' "$1" | grep -qE '^[0-9]{5,15}:[A-Za-z0-9_-]{20,}$'; }
+valid_token()  { printf '%s' "$1" | grep -qE '^[0-9]{5,15}:[A-Za-z0-9_-]{20,}$'; }
 valid_domain() { printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$'; }
 
 # Проверяем токен через Telegram и заодно узнаём имя бота.
@@ -127,7 +144,7 @@ check_token() {
   esac
 }
 
-# Переводим «+5», «-3:30», «utc+5», «300» в минуты от UTC.
+# «+5», «-3:30», «utc+5», «300» → минуты от UTC
 tz_to_minutes() {
   local value="${1//[[:space:]]/}" hours minutes sign=1
   value="${value#[uU][tT][cC]}"
@@ -138,7 +155,6 @@ tz_to_minutes() {
     *)   hours="$value"; minutes=0 ;;
   esac
   case "$hours$minutes" in *[!0-9]*) printf '300'; return ;; esac
-  # Значения больше 14 считаем уже минутами: «300» — это UTC+5.
   if [ "$hours" -gt 14 ] 2>/dev/null && [ "$minutes" = "0" ]; then
     printf '%s' "$((sign * hours))"
   else
@@ -154,13 +170,14 @@ if [ "$TOKEN_FROM_FLAG" = "0" ] && [ -n "$(prev BOT_TOKEN)" ]; then
   BOT_TOKEN="$(prev BOT_TOKEN)"
   BOT_USERNAME="$(prev BOT_USERNAME)"
   [ -n "$DOMAIN" ] || DOMAIN="$(prev DOMAIN)"
+  [ -n "$PROXY" ] || PROXY="$(prev PROXY)"
   CURRENCY="$(prev DEFAULT_CURRENCY)"; CURRENCY="${CURRENCY:-UZS}"
   TZ_OFFSET="$(prev DEFAULT_TZ_OFFSET)"; TZ_OFFSET="${TZ_OFFSET:-300}"
   ANTHROPIC_API_KEY="$(prev ANTHROPIC_API_KEY)"
-  APP_PORT="$(prev APP_PORT)"; APP_PORT="${APP_PORT:-3000}"
+  [ -n "$APP_PORT" ] || APP_PORT="$(prev APP_PORT)"
   say "Нашёл установку в $DIR${BOT_USERNAME:+ (бот @$BOT_USERNAME)} — обновляю с текущими настройками"
   if [ "$TTY_OPEN" = "1" ] && ! confirm "Обновить с этими настройками?"; then
-    BOT_TOKEN=""   # ответили «нет» — спросим всё заново
+    BOT_TOKEN=""
     say "Хорошо, настроим заново"
   fi
 fi
@@ -213,9 +230,59 @@ HELLO
   TZ_OFFSET="$(tz_to_minutes "$TZ_ANSWER")"
 
   ask ANTHROPIC_API_KEY "Ключ Anthropic API для распознавания чеков по фото (Enter — пропустить)" ""
+  WIZARD=1
+fi
 
-  if [ -n "$DOMAIN" ]; then PANEL_LINE="https://$DOMAIN"; else PANEL_LINE="по IP сервера, порт $APP_PORT"; fi
+# ── проверки значений ────────────────────────────────────────────────────────
+[ -n "$BOT_TOKEN" ] || die "Нужен токен бота: --token 123456789:AA... (получить у @BotFather)"
+looks_like_placeholder "$BOT_TOKEN" && die "Вместо токена подставился плейсхолдер. Вставьте настоящий токен от @BotFather."
+valid_token "$BOT_TOKEN" || die "Токен не похож на настоящий: ожидается вид 123456789:AAH..."
 
+DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
+if [ -n "$DOMAIN" ]; then
+  looks_like_placeholder "$DOMAIN" && die "Укажите свой домен вместо примера, либо запустите без --domain."
+  valid_domain "$DOMAIN" || die "Домен «$DOMAIN» выглядит неправильно. Пример: kopeyka.mysite.ru"
+fi
+[ "$TOKEN_FROM_FLAG" = "1" ] && [ -z "$BOT_USERNAME" ] && check_token "$BOT_TOKEN" >/dev/null 2>&1 || true
+
+# ── как отдавать панель наружу ───────────────────────────────────────────────
+if [ -z "$DOMAIN" ]; then
+  PROXY="none"
+elif [ "$PROXY_FROM_FLAG" = "0" ] || [ -z "$PROXY" ]; then
+  OWNER80="$(port_owner 80)"
+  case "$OWNER80" in
+    "")            PROXY="caddy" ;;
+    nginx|openresty) PROXY="nginx"; say "Порт 80 занят nginx — подключу Копейку к нему, Caddy не нужен" ;;
+    caddy)         PROXY="caddy" ;;
+    *)             PROXY="none"; warn "Порт 80 занят процессом «$OWNER80» — HTTPS настроите сами, приложение подниму на локальном порту" ;;
+  esac
+fi
+
+# Порт приложения: занятый чужим сервисом порт не берём.
+if [ -z "$APP_PORT" ] || port_busy "$APP_PORT"; then
+  NEW_PORT="$(pick_port "${APP_PORT:-3000}")"
+  [ -n "$APP_PORT" ] && [ "$NEW_PORT" != "$APP_PORT" ] && warn "Порт $APP_PORT занят ($(port_owner "$APP_PORT")) — беру $NEW_PORT"
+  APP_PORT="$NEW_PORT"
+fi
+
+case "$PROXY" in
+  caddy) PUBLIC_URL="https://$DOMAIN"; USE_WEBHOOK=1; BIND="127.0.0.1"; PROFILE=(--profile tls); PUBLISH=0 ;;
+  nginx) PUBLIC_URL="https://$DOMAIN"; USE_WEBHOOK=1; BIND="127.0.0.1"; PROFILE=(); PUBLISH=1 ;;
+  *)
+    if [ -n "$DOMAIN" ]; then
+      PUBLIC_URL="https://$DOMAIN"; USE_WEBHOOK=1; BIND="127.0.0.1"; PROFILE=(); PUBLISH=1
+    else
+      IP="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
+      PUBLIC_URL="http://${IP:-localhost}:$APP_PORT"; USE_WEBHOOK=0; BIND="0.0.0.0"; PROFILE=(); PUBLISH=1
+    fi ;;
+esac
+
+if [ "${WIZARD:-0}" = "1" ]; then
+  case "$PROXY" in
+    caddy) PANEL_LINE="https://$DOMAIN (Caddy, сертификат выпустится сам)" ;;
+    nginx) PANEL_LINE="https://$DOMAIN (через ваш nginx, порт приложения $APP_PORT)" ;;
+    *)     PANEL_LINE="$PUBLIC_URL" ;;
+  esac
   cat >&2 <<SUMMARY
 
   ── Проверьте ────────────────────────────────────
@@ -230,20 +297,6 @@ HELLO
 SUMMARY
   confirm "Ставим?" || die "Отменено. Запустите команду ещё раз, когда будете готовы."
 fi
-
-# ── проверки для не-интерактивного запуска ───────────────────────────────────
-[ -n "$BOT_TOKEN" ] || die "Нужен токен бота: --token 123456789:AA... (получить у @BotFather)"
-if looks_like_placeholder "$BOT_TOKEN"; then
-  die "Вместо токена подставился плейсхолдер. Уберите угловые скобки и вставьте настоящий токен от @BotFather."
-fi
-valid_token "$BOT_TOKEN" || die "Токен не похож на настоящий: ожидается вид 123456789:AAH..."
-
-DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
-if [ -n "$DOMAIN" ]; then
-  looks_like_placeholder "$DOMAIN" && die "Укажите свой домен вместо примера, либо запустите без --domain."
-  valid_domain "$DOMAIN" || die "Домен «$DOMAIN» выглядит неправильно. Пример: kopeyka.mysite.ru"
-fi
-[ "$TOKEN_FROM_FLAG" = "1" ] && [ -z "$BOT_USERNAME" ] && check_token "$BOT_TOKEN" >/dev/null 2>&1 || true
 
 # ── 1. Docker ────────────────────────────────────────────────────────────────
 if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
@@ -280,20 +333,12 @@ ENV_FILE="$DIR/.env"
 keep() { # сохраняем уже сгенерированные секреты, чтобы сессии не слетали
   local key="$1"
   [ -f "$ENV_FILE" ] || return 0
-  sed -n "s/^${key}=//p" "$ENV_FILE" | head -1
+  $SUDO sed -n "s/^${key}=//p" "$ENV_FILE" 2>/dev/null | head -1
 }
 random() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
 SESSION_SECRET="$(keep SESSION_SECRET)"; [ -n "$SESSION_SECRET" ] || SESSION_SECRET="$(random)"
 WEBHOOK_SECRET="$(keep WEBHOOK_SECRET)"; [ -n "$WEBHOOK_SECRET" ] || WEBHOOK_SECRET="$(random)"
-
-if [ -n "$DOMAIN" ]; then
-  PUBLIC_URL="https://$DOMAIN"; USE_WEBHOOK=1; BIND="127.0.0.1"; PROFILE=(--profile tls)
-else
-  IP="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
-  PUBLIC_URL="http://${IP:-localhost}:$APP_PORT"; USE_WEBHOOK=0; BIND="0.0.0.0"; PROFILE=()
-  warn "Без домена: панель будет по $PUBLIC_URL, без HTTPS и без Mini App"
-fi
 
 say "Пишу $ENV_FILE"
 ENV_CONTENT="$(cat <<ENVEOF
@@ -307,6 +352,7 @@ DEFAULT_CURRENCY=$CURRENCY
 DEFAULT_TZ_OFFSET=$TZ_OFFSET
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 DOMAIN=$DOMAIN
+PROXY=$PROXY
 BIND=$BIND
 APP_PORT=$APP_PORT
 ENVEOF
@@ -318,14 +364,13 @@ else
   $SUDO chmod 600 "$ENV_FILE"
 fi
 
-# Без домена панель должна быть доступна снаружи — публикуем порт через override.
+# Порт публикуем, только когда к приложению должен ходить кто-то с хоста.
 OVERRIDE="$DIR/docker-compose.override.yml"
 if [ "$DRY_RUN" = "1" ]; then
-  [ -z "$DOMAIN" ] && echo "  [dry-run] публикация порта $APP_PORT через $OVERRIDE" \
-                   || echo "  [dry-run] порт наружу не публикуется, снаружи только Caddy"
-elif [ -z "$DOMAIN" ]; then
-  printf 'services:\n  app:\n    ports:\n      - "%s:%s:3000"\n' "$BIND" "$APP_PORT" \
-    | $SUDO tee "$OVERRIDE" >/dev/null
+  [ "$PUBLISH" = "1" ] && echo "  [dry-run] публикация порта $BIND:$APP_PORT через override" \
+                       || echo "  [dry-run] порт наружу не публикуется — снаружи только Caddy"
+elif [ "$PUBLISH" = "1" ]; then
+  printf 'services:\n  app:\n    ports:\n      - "%s:%s:3000"\n' "$BIND" "$APP_PORT" | $SUDO tee "$OVERRIDE" >/dev/null
 else
   $SUDO rm -f "$OVERRIDE"
 fi
@@ -335,17 +380,72 @@ say "Собираю и запускаю контейнеры (первый ра�
 if [ "$DRY_RUN" = "1" ]; then
   echo "  [dry-run] docker compose down --remove-orphans && docker compose ${PROFILE[*]:-} up -d --build"
 else
-  # Сначала гасим старые контейнеры: иначе при смене портов новый не стартует
-  # с «port is already allocated». Данные лежат в томе и не теряются.
   (cd "$DIR" && $SUDO docker compose down --remove-orphans 2>/dev/null || true)
   if ! (cd "$DIR" && $SUDO docker compose "${PROFILE[@]}" up -d --build); then
     warn "Контейнеры не поднялись. Кто занимает порты:"
-    ($SUDO ss -ltnp 2>/dev/null || $SUDO netstat -ltnp 2>/dev/null) | grep -E ":($APP_PORT|80|443) " | sed 's/^/    /' || true
+    listeners | grep -E ":($APP_PORT|80|443) " | sed 's/^/    /' || true
     die "Смотрите вывод выше и логи: cd $DIR && $SUDO docker compose logs --tail=50"
   fi
 fi
 
-# ── 5. Проверка ──────────────────────────────────────────────────────────────
+# ── 5. Сайт в существующем nginx ─────────────────────────────────────────────
+if [ "$PROXY" = "nginx" ]; then
+  if [ -d /etc/nginx/sites-available ]; then
+    NGINX_CONF="/etc/nginx/sites-available/kopeyka.conf"; NGINX_LINK="/etc/nginx/sites-enabled/kopeyka.conf"
+  else
+    NGINX_CONF="/etc/nginx/conf.d/kopeyka.conf"; NGINX_LINK=""
+  fi
+  say "Добавляю сайт $DOMAIN в nginx ($NGINX_CONF)"
+  NGINX_CONTENT="$(cat <<NGINXEOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+
+    client_max_body_size 10m;
+
+    location / {
+        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 60s;
+    }
+}
+NGINXEOF
+)"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "  [dry-run] конфиг nginx:"; printf '%s\n' "$NGINX_CONTENT" | sed 's/^/    /'
+    echo "  [dry-run] nginx -t && systemctl reload nginx"
+    echo "  [dry-run] certbot --nginx -d $DOMAIN"
+  else
+    printf '%s\n' "$NGINX_CONTENT" | $SUDO tee "$NGINX_CONF" >/dev/null
+    [ -n "$NGINX_LINK" ] && $SUDO ln -sf "$NGINX_CONF" "$NGINX_LINK"
+    if $SUDO nginx -t 2>/dev/null; then
+      $SUDO systemctl reload nginx 2>/dev/null || $SUDO nginx -s reload
+      say "nginx перечитал конфигурацию"
+      if command -v certbot >/dev/null; then
+        say "Прошу сертификат у certbot…"
+        if $SUDO certbot --nginx -d "$DOMAIN" --non-interactive --redirect --agree-tos \
+             --register-unsafely-without-email 2>&1 | tail -3; then
+          say "Сертификат для $DOMAIN получен"
+        else
+          warn "certbot не смог выпустить сертификат — проверьте A-запись $DOMAIN и повторите:"
+          warn "  $SUDO certbot --nginx -d $DOMAIN"
+        fi
+      else
+        warn "certbot не установлен — выпустите сертификат вручную:"
+        warn "  $SUDO apt install -y certbot python3-certbot-nginx && $SUDO certbot --nginx -d $DOMAIN"
+      fi
+    else
+      warn "nginx не принял конфигурацию — проверьте: $SUDO nginx -t"
+    fi
+  fi
+fi
+
+# ── 6. Проверка ──────────────────────────────────────────────────────────────
 if [ "$DRY_RUN" != "1" ]; then
   say "Жду ответа приложения…"
   for _ in $(seq 1 30); do
@@ -356,6 +456,10 @@ if [ "$DRY_RUN" != "1" ]; then
     fi
     sleep 2
   done
+  # Вебхук ставится при старте, но домен мог быть ещё не готов — перезапустим бота.
+  if [ "$USE_WEBHOOK" = "1" ] && [ "$PROXY" = "nginx" ]; then
+    (cd "$DIR" && $SUDO docker compose restart app >/dev/null 2>&1) || true
+  fi
 fi
 
 if [ -n "$BOT_USERNAME" ]; then BOT_LINE="https://t.me/$BOT_USERNAME"; else BOT_LINE="откройте своего бота в Telegram"; fi
@@ -367,16 +471,24 @@ cat <<DONE
    Панель:   $PUBLIC_URL
    Бот:      $BOT_LINE
    Проверка: напишите боту «кофе 350», потом /app — придёт ссылка входа
-   Логи:     cd $DIR && docker compose logs -f app
+   Логи:     cd $DIR && $SUDO docker compose logs -f app
    Обновить: запустите эту же команду ещё раз
 
 DONE
 
-if [ -n "$DOMAIN" ]; then
-  cat <<TLS
+case "$PROXY" in
+  caddy) cat <<TLS
    Убедитесь, что A-запись $DOMAIN указывает на этот сервер, а порты 80 и 443 открыты —
    Caddy выпускает сертификат сам при первом обращении.
    Чтобы панель открывалась внутри Telegram: @BotFather → /setdomain → $DOMAIN
 
 TLS
-fi
+  ;;
+  nginx) cat <<NG
+   Панель отдаёт ваш nginx: $NGINX_CONF → 127.0.0.1:$APP_PORT
+   Если сертификата ещё нет: $SUDO certbot --nginx -d $DOMAIN
+   Чтобы панель открывалась внутри Telegram: @BotFather → /setdomain → $DOMAIN
+
+NG
+  ;;
+esac
