@@ -321,9 +321,16 @@ fi
 # ── 4. Запуск ────────────────────────────────────────────────────────────────
 say "Собираю и запускаю контейнеры (первый раз это пара минут)…"
 if [ "$DRY_RUN" = "1" ]; then
-  echo "  [dry-run] docker compose ${PROFILE[*]:-} up -d --build"
+  echo "  [dry-run] docker compose down --remove-orphans && docker compose ${PROFILE[*]:-} up -d --build"
 else
-  (cd "$DIR" && $SUDO docker compose "${PROFILE[@]}" up -d --build)
+  # Сначала гасим старые контейнеры: иначе при смене портов новый не стартует
+  # с «port is already allocated». Данные лежат в томе и не теряются.
+  (cd "$DIR" && $SUDO docker compose down --remove-orphans 2>/dev/null || true)
+  if ! (cd "$DIR" && $SUDO docker compose "${PROFILE[@]}" up -d --build); then
+    warn "Контейнеры не поднялись. Кто занимает порты:"
+    ($SUDO ss -ltnp 2>/dev/null || $SUDO netstat -ltnp 2>/dev/null) | grep -E ":($APP_PORT|80|443) " | sed 's/^/    /' || true
+    die "Смотрите вывод выше и логи: cd $DIR && $SUDO docker compose logs --tail=50"
+  fi
 fi
 
 # ── 5. Проверка ──────────────────────────────────────────────────────────────

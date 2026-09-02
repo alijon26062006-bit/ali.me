@@ -62,7 +62,13 @@ else
     ok "контейнер приложения запущен"
   else
     bad "контейнер приложения не запущен"
-    fix "cd $DIR && $SUDO docker compose up -d --build"
+    BUSY="$(($SUDO ss -ltnp 2>/dev/null || $SUDO netstat -ltnp 2>/dev/null) | grep -E ":$APP_PORT " || true)"
+    if [ -n "$BUSY" ]; then
+      info "порт $APP_PORT уже занят:"; printf '%s\n' "$BUSY" | sed 's/^/    /'
+      fix "погасите старые контейнеры и поднимите заново: cd $DIR && $SUDO docker compose down --remove-orphans && $SUDO docker compose up -d --build"
+    else
+      fix "cd $DIR && $SUDO docker compose up -d --build"
+    fi
   fi
   if [ -n "$DOMAIN" ] && ! printf '%s' "$PS" | grep -qiE 'caddy.*(running|up)'; then
     bad "Caddy не запущен, а домен задан — HTTPS не работает"
