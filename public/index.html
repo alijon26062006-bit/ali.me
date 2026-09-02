@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Копейка — расходы</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪙</text></svg>">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">🪙 <span>Копейка</span></div>
+      <div class="month-nav" id="month-nav" hidden>
+        <button type="button" id="month-prev" aria-label="Предыдущий месяц">‹</button>
+        <span id="month-label">—</span>
+        <button type="button" id="month-next" aria-label="Следующий месяц">›</button>
+      </div>
+    </header>
+
+    <div class="tabs" role="tablist" id="tabs">
+      <button role="tab" data-period="today" aria-selected="false">Сегодня</button>
+      <button role="tab" data-period="week" aria-selected="false">Неделя</button>
+      <button role="tab" data-period="month" aria-selected="true">Месяц</button>
+    </div>
+
+    <section class="card">
+      <div class="total-row">
+        <div>
+          <div class="total" id="total">—</div>
+          <div class="total-meta" id="total-meta">загружаю…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <form class="quick" id="quick-form" autocomplete="off">
+        <input id="quick-input" name="text" placeholder="кофе 350" enterkeyhint="done" aria-label="Новая трата">
+        <button class="primary" type="submit">Записать</button>
+      </form>
+      <div class="hint">Одним сообщением: <b>такси 900 транспорт</b>, <b>обед 12$</b>, <b>вчера продукты 120000</b></div>
+    </section>
+
+    <section class="card" id="chart-card">
+      <h2 class="section-title">По категориям</h2>
+      <div class="charts">
+        <svg id="donut" viewBox="0 0 200 200" role="img" aria-label="Расходы по категориям"></svg>
+        <div class="legend" id="legend"></div>
+      </div>
+    </section>
+
+    <section class="card" id="days-card">
+      <h2 class="section-title">По дням</h2>
+      <div class="bars" id="bars" role="img" aria-label="Расходы по дням"></div>
+      <div class="bars-axis" id="bars-axis"></div>
+    </section>
+
+    <section class="card" id="limits-card" hidden>
+      <h2 class="section-title">Лимиты на месяц</h2>
+      <div class="limits" id="limits"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Траты <span id="filter-note"></span></h2>
+      <div id="list"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Настройки</h2>
+      <div class="settings-grid">
+        <div>
+          <label for="currency">Валюта итогов</label>
+          <select id="currency"></select>
+        </div>
+        <div>
+          <label for="tz">Часовой пояс</label>
+          <select id="tz"></select>
+        </div>
+      </div>
+      <div class="links">
+        <a id="export-link" href="/api/export.csv?period=all">Экспорт в CSV</a>
+        <a id="bot-link" href="https://t.me/" target="_blank" rel="noopener">Открыть бота</a>
+        <button type="button" id="logout">Выйти</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

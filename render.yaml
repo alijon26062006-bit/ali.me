@@ -1,0 +1,33 @@
+# Деплой на Render одним кликом: New → Blueprint → указать этот репозиторий.
+# Секреты (BOT_TOKEN, SESSION_SECRET) задаются в дашборде, а не в репозитории.
+services:
+  - type: web
+    name: kopeyka
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    disk:
+      name: kopeyka-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/kopeyka.db
+      - key: DEFAULT_CURRENCY
+        value: UZS
+      - key: DEFAULT_TZ_OFFSET
+        value: "300"
+      - key: USE_WEBHOOK
+        value: "1"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

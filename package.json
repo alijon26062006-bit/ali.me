@@ -1,0 +1,25 @@
+{
+  "name": "kopeyka",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Копейка — трекер личных расходов: Telegram-бот для ввода + веб-панель с отчётами",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js",
+    "seed": "node scripts/seed.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.0",
+    "better-sqlite3": "^12.2.0",
+    "dotenv": "^17.2.1",
+    "express": "^4.21.2"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  }
+}

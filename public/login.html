@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Копейка — вход через Telegram</title>
+<meta name="description" content="Трекер личных расходов в Telegram: пишете «кофе 350» — трата сохраняется.">
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪙</text></svg>">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <main class="login">
+    <div class="card">
+      <div class="logo">🪙</div>
+      <h1>Копейка</h1>
+      <p>Трекер расходов, который живёт в Telegram. Панель открывается через бота — отдельный пароль не нужен.</p>
+      <ol class="steps">
+        <li>Откройте бота и напишите трату: <b>кофе 350</b></li>
+        <li>Отправьте команду <b>/app</b></li>
+        <li>Нажмите «Открыть панель» — вы уже внутри</li>
+      </ol>
+      <a class="primary" id="bot-link" href="https://t.me/">Открыть бота</a>
+      <p class="hint" id="status"></p>
+    </div>
+  </main>
+  <script>
+    // Если панель открыта внутри Telegram — логинимся сразу, без ссылок.
+    const tg = window.Telegram?.WebApp;
+    if (tg?.initData) {
+      tg.ready();
+      tg.expand();
+      fetch('/api/auth/webapp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ initData: tg.initData }),
+      }).then((r) => {
+        if (r.ok) location.replace('/');
+        else document.getElementById('status').textContent = 'Не удалось войти через Telegram — откройте панель командой /app в боте.';
+      });
+    }
+
+    fetch('/api/public')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.botUsername) {
+          const link = document.getElementById('bot-link');
+          link.href = 'https://t.me/' + data.botUsername;
+          link.textContent = 'Открыть @' + data.botUsername;
+        }
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>
