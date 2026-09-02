@@ -32,6 +32,10 @@ if (config.botToken) {
     }
   } catch (error) {
     console.error('Не удалось запустить бота:', error.message);
+    if ([401, 404].includes(error.code)) {
+      console.error('Похоже, BOT_TOKEN неверный — возьмите свежий у @BotFather.');
+    }
+    console.error('Веб-панель продолжит работать, бот — нет.');
   }
 } else {
   console.warn('BOT_TOKEN не задан — работает только веб-панель');

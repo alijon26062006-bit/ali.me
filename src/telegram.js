@@ -16,8 +16,10 @@ export async function callApi(method, params = {}) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(params),
   });
-  const data = await response.json().catch(() => ({ ok: false, description: 'invalid JSON' }));
-  if (!data.ok) throw new TelegramError(method, data.description, data.error_code);
+  const data = await response
+    .json()
+    .catch(() => ({ ok: false, description: `HTTP ${response.status}, ответ не JSON`, error_code: response.status }));
+  if (!data.ok) throw new TelegramError(method, data.description, data.error_code || response.status);
   return data.result;
 }
 
