@@ -101,12 +101,48 @@ npm run dev       # автоперезапуск при изменениях
 
 \* обязателен в production. \*\* обязателен, если включён вебхук или нужен вход через Mini App.
 
-## Деплой
+## Деплой одной командой
+
+На чистом сервере (Ubuntu/Debian/CentOS, нужен только root или sudo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh \
+  | bash -s -- --token <BOT_TOKEN> --domain kopeyka.example.com --username my_kopeyka_bot
+```
+
+Скрипт сам поставит Docker, заберёт код, сгенерирует `SESSION_SECRET` и `WEBHOOK_SECRET`,
+поднимет приложение и Caddy, выпустит сертификат Let's Encrypt и включит вебхук.
+Через минуту бот и панель работают на `https://kopeyka.example.com`.
+
+Перед запуском нужна только A-запись домена на IP сервера и открытые порты 80 и 443.
+После — в [@BotFather](https://t.me/BotFather) выполните `/setdomain` и укажите тот же домен,
+чтобы панель открывалась прямо внутри Telegram.
+
+Без домена (быстрая проверка, панель по IP, бот на long polling):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh \
+  | bash -s -- --token <BOT_TOKEN>
+```
+
+Полезные опции: `--anthropic-key` (распознавание чеков), `--currency USD`, `--tz-offset 180`,
+`--port 8080`, `--dir /srv/kopeyka`. Повторный запуск той же команды = обновление:
+база и секреты сохраняются. Логи — `cd /opt/kopeyka && docker compose logs -f app`.
+
+## Другие способы деплоя
 
 Приложение — один процесс: веб-панель и бот живут вместе, данные в SQLite-файле.
 Нужен хостинг с постоянным диском (Render, Railway, Fly.io, любой VPS).
 
-**Docker (годится везде):**
+**Docker Compose вручную:**
+
+```bash
+git clone -b claude/charming-davinci-jhnk9o https://github.com/alijon26062006-bit/ali.me.git
+cd ali.me && cp .env.example .env   # заполнить BOT_TOKEN, PUBLIC_URL, SESSION_SECRET, DOMAIN
+docker compose --profile tls up -d --build   # без домена: docker compose up -d --build
+```
+
+**Только контейнер приложения, без Caddy:**
 
 ```bash
 docker build -t kopeyka .
@@ -150,6 +186,7 @@ src/
   server.js     REST API и раздача панели
 public/         панель: один HTML, один JS, один CSS — без сборки и CDN
 test/           41 тест на node:test
+scripts/        deploy.sh — установка на сервер одной командой, seed.js — демо-данные
 ```
 
 Зависимости: `express`, `better-sqlite3`, `dotenv` и (только для OCR) `@anthropic-ai/sdk`.
