@@ -106,9 +106,14 @@ npm run dev       # автоперезапуск при изменениях
 На чистом сервере (Ubuntu/Debian/CentOS, нужен только root или sudo):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh \
-  | bash -s -- --token <BOT_TOKEN> --domain kopeyka.example.com --username my_kopeyka_bot
+curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh -o deploy.sh
+bash deploy.sh --token 8123456789:AAH... --domain kopeyka.mysite.ru --username my_kopeyka_bot
 ```
+
+Токен и домен подставьте свои — **без угловых скобок**: `<...>` в bash означает
+перенаправление ввода, и команда упадёт с `No such file or directory`.
+Если запустить `bash deploy.sh` вообще без `--token`, скрипт спросит токен сам —
+так он не попадёт в историю команд.
 
 Скрипт сам поставит Docker, заберёт код, сгенерирует `SESSION_SECRET` и `WEBHOOK_SECRET`,
 поднимет приложение и Caddy, выпустит сертификат Let's Encrypt и включит вебхук.
@@ -121,8 +126,7 @@ curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/ch
 Без домена (быстрая проверка, панель по IP, бот на long polling):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh \
-  | bash -s -- --token <BOT_TOKEN>
+bash deploy.sh --token 8123456789:AAH...
 ```
 
 Полезные опции: `--anthropic-key` (распознавание чеков), `--currency USD`, `--tz-offset 180`,

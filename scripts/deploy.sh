@@ -67,8 +67,26 @@ done
 if [ -z "$BOT_TOKEN" ] && [ -t 0 ]; then
   read -rp "Токен бота от @BotFather: " BOT_TOKEN
 fi
-[ -n "$BOT_TOKEN" ] || die "Нужен токен бота: --token <BOT_TOKEN> (получить у @BotFather)"
+[ -n "$BOT_TOKEN" ] || die "Нужен токен бота: --token 123456789:AA... (получить у @BotFather)"
+
+# Частая ошибка: команду копируют вместе с угловыми скобками, и bash
+# принимает <ТОКЕН> за перенаправление ввода. Проверяем формат сразу.
+case "$BOT_TOKEN" in
+  *'<'*|*'>'*|*ТОКЕН*|*TOKEN*|*BOT_TOKEN*)
+    die "Похоже, вместо токена подставился плейсхолдер. Уберите угловые скобки и вставьте настоящий токен от @BotFather." ;;
+esac
+printf '%s' "$BOT_TOKEN" | grep -qE '^[0-9]{5,15}:[A-Za-z0-9_-]{20,}$' \
+  || die "Токен не похож на настоящий: ожидается вид 123456789:AAH... (получите у @BotFather)"
+
 DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
+if [ -n "$DOMAIN" ]; then
+  case "$DOMAIN" in
+    *'<'*|*'>'*|*example.com|*example.org|*ваш*|*your*|*домен*)
+      die "Укажите свой реальный домен вместо примера, либо запустите без --domain (панель будет по IP)." ;;
+  esac
+  printf '%s' "$DOMAIN" | grep -qE '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' \
+    || die "Домен «$DOMAIN» выглядит неправильно. Пример: kopeyka.mysite.ru"
+fi
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
