@@ -79,11 +79,32 @@ else
   fix "смотрите логи: cd $DIR && $SUDO docker compose logs --tail=50 app"
 fi
 
+# Связь наружу именно из контейнера: сервер может ходить в интернет, а контейнер — нет.
+if command -v docker >/dev/null; then
+  NET="$(cd "$DIR" && $SUDO docker compose exec -T app node -e \
+    "fetch('https://api.telegram.org/').then(r=>console.log('OK '+r.status)).catch(e=>console.log('FAIL '+((e.cause&&e.cause.code)||e.message)))" 2>&1)"
+  case "$NET" in
+    *OK*)
+      ok "из контейнера Telegram доступен" ;;
+    *EAI_AGAIN*|*ENOTFOUND*|*getaddrinfo*)
+      bad "из контейнера не резолвится api.telegram.org — у него нет рабочего DNS"
+      fix "обновитесь: cd $DIR && $SUDO git fetch origin ${KOPEYKA_BRANCH:-claude/charming-davinci-jhnk9o} && $SUDO git checkout -B deploy origin/${KOPEYKA_BRANCH:-claude/charming-davinci-jhnk9o} && $SUDO docker compose up -d --build"
+      fix "в новой версии compose задаёт контейнерам DNS 1.1.1.1 и 8.8.8.8" ;;
+    *ETIMEDOUT*|*ECONNREFUSED*|*ECONNRESET*|*EHOSTUNREACH*)
+      bad "из контейнера не проходит соединение с Telegram: $NET"
+      fix "проверьте исходящий трафик и файрвол сервера" ;;
+    *FAIL*)
+      bad "из контейнера нет связи с Telegram: $NET" ;;
+    *)
+      : ;;  # контейнер не запущен — об этом уже сказано выше
+  esac
+fi
+
 LOGS="$(cd "$DIR" && $SUDO docker compose logs --tail=60 app 2>/dev/null)"
 if printf '%s' "$LOGS" | grep -q '🤖 Бот'; then
   ok "$(printf '%s' "$LOGS" | grep -o '🤖 Бот:.*' | tail -1)"
 fi
-if printf '%s' "$LOGS" | grep -qi 'Не удалось запустить бота'; then
+if printf '%s' "$LOGS" | grep -qiE 'Не удалось запустить бота|нет связи с api.telegram.org'; then
   bad "приложение не смогло подключиться к Telegram:"
   printf '%s' "$LOGS" | grep -i -A2 'Не удалось запустить бота' | tail -3 | sed 's/^/    /'
   fix "проверьте BOT_TOKEN в $ENV_FILE и доступ сервера к api.telegram.org"

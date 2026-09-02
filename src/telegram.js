@@ -11,11 +11,19 @@ export class TelegramError extends Error {
 }
 
 export async function callApi(method, params = {}) {
-  const response = await fetch(API(method), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(params),
-  });
+  let response;
+  try {
+    response = await fetch(API(method), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+  } catch (error) {
+    // fetch прячет причину в cause — без неё в логе остаётся бесполезное «fetch failed».
+    const code = error.cause?.code || error.code || '';
+    const detail = error.cause?.message || error.message;
+    throw new TelegramError(method, `нет связи с api.telegram.org${code ? ` (${code})` : ''}: ${detail}`, 0);
+  }
   const data = await response
     .json()
     .catch(() => ({ ok: false, description: `HTTP ${response.status}, ответ не JSON`, error_code: response.status }));

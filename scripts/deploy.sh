@@ -70,6 +70,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+  command -v sudo >/dev/null || die "Запустите от root или установите sudo"
+  SUDO="sudo"
+fi
+
+run() { if [ "$DRY_RUN" = "1" ]; then echo "  [dry-run] $*"; else $SUDO "$@"; fi; }
+
 # ── вопросы задаём в терминал напрямую, чтобы работало и через curl | bash ──
 TTY_OPEN=0
 if exec 3</dev/tty; then TTY_OPEN=1; fi 2>/dev/null || TTY_OPEN=0
@@ -138,8 +146,27 @@ tz_to_minutes() {
   fi
 }
 
+# ── уже установлено? тогда просто обновляем ──────────────────────────────────
+PREV_ENV="$($SUDO cat "$DIR/.env" 2>/dev/null || true)"
+prev() { printf '%s\n' "$PREV_ENV" | sed -n "s/^$1=//p" | head -1; }
+
+if [ "$TOKEN_FROM_FLAG" = "0" ] && [ -n "$(prev BOT_TOKEN)" ]; then
+  BOT_TOKEN="$(prev BOT_TOKEN)"
+  BOT_USERNAME="$(prev BOT_USERNAME)"
+  [ -n "$DOMAIN" ] || DOMAIN="$(prev DOMAIN)"
+  CURRENCY="$(prev DEFAULT_CURRENCY)"; CURRENCY="${CURRENCY:-UZS}"
+  TZ_OFFSET="$(prev DEFAULT_TZ_OFFSET)"; TZ_OFFSET="${TZ_OFFSET:-300}"
+  ANTHROPIC_API_KEY="$(prev ANTHROPIC_API_KEY)"
+  APP_PORT="$(prev APP_PORT)"; APP_PORT="${APP_PORT:-3000}"
+  say "Нашёл установку в $DIR${BOT_USERNAME:+ (бот @$BOT_USERNAME)} — обновляю с текущими настройками"
+  if [ "$TTY_OPEN" = "1" ] && ! confirm "Обновить с этими настройками?"; then
+    BOT_TOKEN=""   # ответили «нет» — спросим всё заново
+    say "Хорошо, настроим заново"
+  fi
+fi
+
 # ── мастер ───────────────────────────────────────────────────────────────────
-if [ "$TOKEN_FROM_FLAG" = "0" ]; then
+if [ "$TOKEN_FROM_FLAG" = "0" ] && [ -z "$BOT_TOKEN" ]; then
   [ "$TTY_OPEN" = "1" ] || die "Нет терминала для вопросов. Передайте значения флагами: deploy.sh --token 123:AA... --domain kopeyka.mysite.ru"
 
   cat >&2 <<'HELLO'
@@ -217,14 +244,6 @@ if [ -n "$DOMAIN" ]; then
   valid_domain "$DOMAIN" || die "Домен «$DOMAIN» выглядит неправильно. Пример: kopeyka.mysite.ru"
 fi
 [ "$TOKEN_FROM_FLAG" = "1" ] && [ -z "$BOT_USERNAME" ] && check_token "$BOT_TOKEN" >/dev/null 2>&1 || true
-
-SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-  command -v sudo >/dev/null || die "Запустите от root или установите sudo"
-  SUDO="sudo"
-fi
-
-run() { if [ "$DRY_RUN" = "1" ]; then echo "  [dry-run] $*"; else $SUDO "$@"; fi; }
 
 # ── 1. Docker ────────────────────────────────────────────────────────────────
 if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then

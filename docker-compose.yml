@@ -11,6 +11,11 @@ services:
       DB_PATH: /data/kopeyka.db
       PORT: "3000"
       NODE_ENV: production
+    # На части VPS резолвер хоста недоступен из контейнера — задаём DNS явно,
+    # иначе запросы к api.telegram.org падают с EAI_AGAIN / fetch failed.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     volumes:
       - kopeyka-data:/data
     ports:
@@ -29,6 +34,9 @@ services:
     depends_on: [app]
     environment:
       DOMAIN: ${DOMAIN:-}
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     ports:
       - "80:80"
       - "443:443"
