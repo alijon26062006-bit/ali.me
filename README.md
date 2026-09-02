@@ -103,35 +103,38 @@ npm run dev       # автоперезапуск при изменениях
 
 ## Деплой одной командой
 
-На чистом сервере (Ubuntu/Debian/CentOS, нужен только root или sudo):
+На чистом сервере (Ubuntu/Debian/CentOS, нужен root или sudo):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh -o deploy.sh
-bash deploy.sh --token 8123456789:AAH... --domain kopeyka.mysite.ru --username my_kopeyka_bot
+curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh | bash
 ```
 
-Токен и домен подставьте свои — **без угловых скобок**: `<...>` в bash означает
-перенаправление ввода, и команда упадёт с `No such file or directory`.
-Если запустить `bash deploy.sh` вообще без `--token`, скрипт спросит токен сам —
-так он не попадёт в историю команд.
+Скрипт сам спросит всё, что нужно:
 
-Скрипт сам поставит Docker, заберёт код, сгенерирует `SESSION_SECRET` и `WEBHOOK_SECRET`,
-поднимет приложение и Caddy, выпустит сертификат Let's Encrypt и включит вебхук.
-Через минуту бот и панель работают на `https://kopeyka.example.com`.
+- **токен бота** от [@BotFather](https://t.me/BotFather) — сразу проверяется через Telegram,
+  имя бота определяется автоматически;
+- **домен панели** — если ввести, поднимется HTTPS с сертификатом Let's Encrypt и вебхук;
+  если нажать Enter, панель будет доступна по IP, а бот пойдёт на long polling;
+- **валюта**, **часовой пояс** и, по желанию, **ключ Anthropic API** для распознавания чеков.
 
-Перед запуском нужна только A-запись домена на IP сервера и открытые порты 80 и 443.
-После — в [@BotFather](https://t.me/BotFather) выполните `/setdomain` и укажите тот же домен,
-чтобы панель открывалась прямо внутри Telegram.
+Дальше он всё делает сам: ставит Docker, забирает код, генерирует `SESSION_SECRET`
+и `WEBHOOK_SECRET`, пишет `.env` с правами 600, собирает и запускает контейнеры,
+дожидается ответа `/healthz` и печатает ссылки на бота и панель.
 
-Без домена (быстрая проверка, панель по IP, бот на long polling):
+С доменом нужны только A-запись на IP сервера и открытые порты 80 и 443. После установки
+выполните в [@BotFather](https://t.me/BotFather) `/setdomain` — тогда панель будет
+открываться прямо внутри Telegram.
+
+Для автоматизации те же значения передаются флагами — тогда вопросов не будет:
 
 ```bash
-bash deploy.sh --token 8123456789:AAH...
+curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh \
+  -o deploy.sh && bash deploy.sh --token 8123456789:AAH... --domain kopeyka.mysite.ru
 ```
 
-Полезные опции: `--anthropic-key` (распознавание чеков), `--currency USD`, `--tz-offset 180`,
-`--port 8080`, `--dir /srv/kopeyka`. Повторный запуск той же команды = обновление:
-база и секреты сохраняются. Логи — `cd /opt/kopeyka && docker compose logs -f app`.
+Опции: `--anthropic-key`, `--currency USD`, `--tz-offset 180`, `--port 8080`, `--dir /srv/kopeyka`
+(`--help` — полный список). Повторный запуск той же команды = обновление: база и секреты
+сохраняются. Логи — `cd /opt/kopeyka && docker compose logs -f app`.
 
 ## Другие способы деплоя
 

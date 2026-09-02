@@ -2,12 +2,17 @@
 #
 # Копейка — установка на сервер одной командой.
 #
-#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh \
-#     | bash -s -- --token <BOT_TOKEN> --domain kopeyka.example.com
+#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/charming-davinci-jhnk9o/scripts/deploy.sh | bash
 #
-# Скрипт ставит Docker (если его нет), забирает код, генерирует секреты,
-# поднимает бота и панель, выпускает HTTPS-сертификат и включает вебхук.
-# Повторный запуск = обновление: данные и секреты сохраняются.
+# Без аргументов скрипт спрашивает всё сам: токен бота, домен, валюту,
+# часовой пояс и ключ для распознавания чеков. Дальше ставит Docker
+# (если его нет), забирает код, генерирует секреты, поднимает бота и панель
+# и выпускает HTTPS-сертификат.
+#
+# Для автоматизации те же значения можно передать флагами — тогда вопросов не будет:
+#   ... | bash -s -- --token 123:AA... --domain kopeyka.mysite.ru
+#
+# Повторный запуск = обновление: база и секреты сохраняются.
 set -euo pipefail
 
 REPO_URL="${KOPEYKA_REPO:-https://github.com/alijon26062006-bit/ali.me.git}"
@@ -22,6 +27,7 @@ ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 CURRENCY="${DEFAULT_CURRENCY:-UZS}"
 TZ_OFFSET="${DEFAULT_TZ_OFFSET:-300}"
 APP_PORT="${APP_PORT:-3000}"
+TOKEN_FROM_FLAG=0
 
 say()  { printf '\033[1;32m▸\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
@@ -31,16 +37,16 @@ usage() {
   cat <<'USAGE'
 Копейка — трекер расходов в Telegram.
 
-Использование:
-  deploy.sh --token <BOT_TOKEN> [--domain example.com] [опции]
+  deploy.sh                        мастер: спросит всё по шагам
+  deploy.sh --token TOKEN [опции]  без вопросов, всё из флагов
 
 Опции:
-  --token TOKEN        токен бота от @BotFather (обязательно)
+  --token TOKEN        токен бота от @BotFather
   --domain DOMAIN      домен панели; включает HTTPS и вебхук
-                       (без него панель поднимется на http://IP:PORT, бот — на long polling)
-  --username NAME      имя бота без @ для кнопки «Открыть бота»
+                       (без него — панель на http://IP:PORT, бот на long polling)
+  --username NAME      имя бота без @ (обычно определяется само по токену)
   --anthropic-key KEY  включить распознавание чеков по фото
-  --currency CODE      базовая валюта новых пользователей (по умолчанию UZS)
+  --currency CODE      базовая валюта (по умолчанию UZS)
   --tz-offset MINUTES  часовой пояс в минутах от UTC (по умолчанию 300 = UTC+5)
   --port PORT          порт приложения без домена (по умолчанию 3000)
   --dir PATH           куда установить (по умолчанию /opt/kopeyka)
@@ -50,7 +56,7 @@ USAGE
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --token)          BOT_TOKEN="${2:-}"; shift 2 ;;
+    --token)          BOT_TOKEN="${2:-}"; TOKEN_FROM_FLAG=1; shift 2 ;;
     --domain)         DOMAIN="${2:-}"; shift 2 ;;
     --username)       BOT_USERNAME="${2:-}"; shift 2 ;;
     --anthropic-key)  ANTHROPIC_API_KEY="${2:-}"; shift 2 ;;
@@ -64,29 +70,153 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -z "$BOT_TOKEN" ] && [ -t 0 ]; then
-  read -rp "Токен бота от @BotFather: " BOT_TOKEN
-fi
-[ -n "$BOT_TOKEN" ] || die "Нужен токен бота: --token 123456789:AA... (получить у @BotFather)"
+# ── вопросы задаём в терминал напрямую, чтобы работало и через curl | bash ──
+TTY_OPEN=0
+if exec 3</dev/tty; then TTY_OPEN=1; fi 2>/dev/null || TTY_OPEN=0
 
-# Частая ошибка: команду копируют вместе с угловыми скобками, и bash
-# принимает <ТОКЕН> за перенаправление ввода. Проверяем формат сразу.
-case "$BOT_TOKEN" in
-  *'<'*|*'>'*|*ТОКЕН*|*TOKEN*|*BOT_TOKEN*)
-    die "Похоже, вместо токена подставился плейсхолдер. Уберите угловые скобки и вставьте настоящий токен от @BotFather." ;;
-esac
-printf '%s' "$BOT_TOKEN" | grep -qE '^[0-9]{5,15}:[A-Za-z0-9_-]{20,}$' \
-  || die "Токен не похож на настоящий: ожидается вид 123456789:AAH... (получите у @BotFather)"
+ask() { # ask ПЕРЕМЕННАЯ "вопрос" [значение по умолчанию]
+  local var="$1" prompt="$2" default="${3:-}" answer=""
+  [ -n "$default" ] && prompt="$prompt [$default]"
+  if [ "$TTY_OPEN" = "1" ]; then
+    printf '\033[1;36m?\033[0m %s: ' "$prompt" >&2
+    IFS= read -r answer <&3 || answer=""
+  fi
+  printf -v "$var" '%s' "${answer:-$default}"
+}
+
+confirm() { # confirm "вопрос" — да по умолчанию
+  local answer=""
+  [ "$TTY_OPEN" = "1" ] || return 0
+  printf '\033[1;36m?\033[0m %s [Y/n]: ' "$1" >&2
+  IFS= read -r answer <&3 || answer=""
+  case "$answer" in [nNнН]*) return 1 ;; *) return 0 ;; esac
+}
+
+looks_like_placeholder() {
+  case "$1" in *'<'*|*'>'*|*ТОКЕН*|*TOKEN*|*ВАШ*|*ваш*|*your*|*YOUR*|*example.com|*example.org|*домен*) return 0 ;; esac
+  return 1
+}
+
+valid_token() { printf '%s' "$1" | grep -qE '^[0-9]{5,15}:[A-Za-z0-9_-]{20,}$'; }
+valid_domain() { printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$'; }
+
+# Проверяем токен через Telegram и заодно узнаём имя бота.
+check_token() {
+  local response username
+  response="$(curl -fsS --max-time 10 "https://api.telegram.org/bot$1/getMe" 2>/dev/null || true)"
+  case "$response" in
+    *'"ok":true'*)
+      username="$(printf '%s' "$response" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')"
+      [ -n "$username" ] && BOT_USERNAME="$username"
+      say "Токен принят: бот @${BOT_USERNAME:-?}"
+      return 0 ;;
+    *'"ok":false'*)
+      warn "Telegram не принял этот токен (проверьте, что скопировали целиком)"
+      return 1 ;;
+    *)
+      warn "Не удалось связаться с Telegram — токен не проверен, продолжаю"
+      return 0 ;;
+  esac
+}
+
+# Переводим «+5», «-3:30», «utc+5», «300» в минуты от UTC.
+tz_to_minutes() {
+  local value="${1//[[:space:]]/}" hours minutes sign=1
+  value="${value#[uU][tT][cC]}"
+  [ -n "$value" ] || { printf '300'; return; }
+  case "$value" in -*) sign=-1; value="${value#-}" ;; +*) value="${value#+}" ;; esac
+  case "$value" in
+    *:*) hours="${value%%:*}"; minutes="${value##*:}" ;;
+    *)   hours="$value"; minutes=0 ;;
+  esac
+  case "$hours$minutes" in *[!0-9]*) printf '300'; return ;; esac
+  # Значения больше 14 считаем уже минутами: «300» — это UTC+5.
+  if [ "$hours" -gt 14 ] 2>/dev/null && [ "$minutes" = "0" ]; then
+    printf '%s' "$((sign * hours))"
+  else
+    printf '%s' "$((sign * (hours * 60 + minutes)))"
+  fi
+}
+
+# ── мастер ───────────────────────────────────────────────────────────────────
+if [ "$TOKEN_FROM_FLAG" = "0" ]; then
+  [ "$TTY_OPEN" = "1" ] || die "Нет терминала для вопросов. Передайте значения флагами: deploy.sh --token 123:AA... --domain kopeyka.mysite.ru"
+
+  cat >&2 <<'HELLO'
+
+  🪙  Копейка — трекер расходов в Telegram
+  Сейчас задам несколько вопросов и всё подниму сам.
+  Пустой ответ = значение в скобках.
+
+HELLO
+
+  attempt=0
+  while :; do
+    attempt=$((attempt + 1))
+    ask BOT_TOKEN "Токен бота от @BotFather (вида 123456789:AAH...)" "$BOT_TOKEN"
+    if [ -z "$BOT_TOKEN" ] || looks_like_placeholder "$BOT_TOKEN"; then
+      warn "Нужен настоящий токен. Откройте @BotFather → /newbot (или /mybots → API Token)."
+      BOT_TOKEN=""
+    elif ! valid_token "$BOT_TOKEN"; then
+      warn "Не похоже на токен: ожидается вид 123456789:AAH... Скопируйте его целиком."
+      BOT_TOKEN=""
+    elif check_token "$BOT_TOKEN"; then
+      break
+    else
+      BOT_TOKEN=""
+    fi
+    [ "$attempt" -lt 5 ] || die "Токен так и не подошёл. Возьмите свежий у @BotFather и запустите команду снова."
+  done
+
+  while :; do
+    ask DOMAIN "Домен для панели, например kopeyka.mysite.ru (Enter — работать по IP, без HTTPS)" ""
+    DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
+    [ -z "$DOMAIN" ] && break
+    if looks_like_placeholder "$DOMAIN" || ! valid_domain "$DOMAIN"; then
+      warn "Домен «$DOMAIN» выглядит неправильно. Пример: kopeyka.mysite.ru"
+      continue
+    fi
+    break
+  done
+
+  ask CURRENCY "Основная валюта (UZS, USD, RUB, KZT, EUR…)" "$CURRENCY"
+  CURRENCY="$(printf '%s' "$CURRENCY" | tr '[:lower:]' '[:upper:]')"
+
+  ask TZ_ANSWER "Часовой пояс, например +5 (Ташкент) или +3 (Москва)" "+$((TZ_OFFSET / 60))"
+  TZ_OFFSET="$(tz_to_minutes "$TZ_ANSWER")"
+
+  ask ANTHROPIC_API_KEY "Ключ Anthropic API для распознавания чеков по фото (Enter — пропустить)" ""
+
+  if [ -n "$DOMAIN" ]; then PANEL_LINE="https://$DOMAIN"; else PANEL_LINE="по IP сервера, порт $APP_PORT"; fi
+
+  cat >&2 <<SUMMARY
+
+  ── Проверьте ────────────────────────────────────
+   Бот:           @${BOT_USERNAME:-неизвестно}
+   Панель:        $PANEL_LINE
+   Валюта:        $CURRENCY
+   Часовой пояс:  UTC$([ "$TZ_OFFSET" -ge 0 ] && echo -n '+')$((TZ_OFFSET / 60))
+   Чеки по фото:  $([ -n "$ANTHROPIC_API_KEY" ] && echo 'включены' || echo 'выключены')
+   Каталог:       $DIR
+  ─────────────────────────────────────────────────
+
+SUMMARY
+  confirm "Ставим?" || die "Отменено. Запустите команду ещё раз, когда будете готовы."
+fi
+
+# ── проверки для не-интерактивного запуска ───────────────────────────────────
+[ -n "$BOT_TOKEN" ] || die "Нужен токен бота: --token 123456789:AA... (получить у @BotFather)"
+if looks_like_placeholder "$BOT_TOKEN"; then
+  die "Вместо токена подставился плейсхолдер. Уберите угловые скобки и вставьте настоящий токен от @BotFather."
+fi
+valid_token "$BOT_TOKEN" || die "Токен не похож на настоящий: ожидается вид 123456789:AAH..."
 
 DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
 if [ -n "$DOMAIN" ]; then
-  case "$DOMAIN" in
-    *'<'*|*'>'*|*example.com|*example.org|*ваш*|*your*|*домен*)
-      die "Укажите свой реальный домен вместо примера, либо запустите без --domain (панель будет по IP)." ;;
-  esac
-  printf '%s' "$DOMAIN" | grep -qE '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' \
-    || die "Домен «$DOMAIN» выглядит неправильно. Пример: kopeyka.mysite.ru"
+  looks_like_placeholder "$DOMAIN" && die "Укажите свой домен вместо примера, либо запустите без --domain."
+  valid_domain "$DOMAIN" || die "Домен «$DOMAIN» выглядит неправильно. Пример: kopeyka.mysite.ru"
 fi
+[ "$TOKEN_FROM_FLAG" = "1" ] && [ -z "$BOT_USERNAME" ] && check_token "$BOT_TOKEN" >/dev/null 2>&1 || true
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -143,7 +273,7 @@ if [ -n "$DOMAIN" ]; then
 else
   IP="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
   PUBLIC_URL="http://${IP:-localhost}:$APP_PORT"; USE_WEBHOOK=0; BIND="0.0.0.0"; PROFILE=()
-  warn "Домен не задан: панель будет по $PUBLIC_URL, без HTTPS и без Mini App"
+  warn "Без домена: панель будет по $PUBLIC_URL, без HTTPS и без Mini App"
 fi
 
 say "Пишу $ENV_FILE"
@@ -170,7 +300,7 @@ else
 fi
 
 # ── 4. Запуск ────────────────────────────────────────────────────────────────
-say "Собираю и запускаю контейнеры…"
+say "Собираю и запускаю контейнеры (первый раз это пара минут)…"
 if [ "$DRY_RUN" = "1" ]; then
   echo "  [dry-run] docker compose ${PROFILE[*]:-} up -d --build"
 else
@@ -189,20 +319,23 @@ if [ "$DRY_RUN" != "1" ]; then
   done
 fi
 
+if [ -n "$BOT_USERNAME" ]; then BOT_LINE="https://t.me/$BOT_USERNAME"; else BOT_LINE="откройте своего бота в Telegram"; fi
+
 cat <<DONE
 
 ✅ Готово.
 
-   Панель:  $PUBLIC_URL
-   Бот:     напишите ему «кофе 350», затем /app — придёт ссылка входа
-   Логи:    cd $DIR && docker compose logs -f app
-   Обновить: перезапустите эту же команду
+   Панель:   $PUBLIC_URL
+   Бот:      $BOT_LINE
+   Проверка: напишите боту «кофе 350», потом /app — придёт ссылка входа
+   Логи:     cd $DIR && docker compose logs -f app
+   Обновить: запустите эту же команду ещё раз
 
 DONE
 
 if [ -n "$DOMAIN" ]; then
   cat <<TLS
-   Проверьте, что A-запись $DOMAIN указывает на этот сервер, а порты 80 и 443 открыты —
+   Убедитесь, что A-запись $DOMAIN указывает на этот сервер, а порты 80 и 443 открыты —
    Caddy выпускает сертификат сам при первом обращении.
    Чтобы панель открывалась внутри Telegram: @BotFather → /setdomain → $DOMAIN
 
