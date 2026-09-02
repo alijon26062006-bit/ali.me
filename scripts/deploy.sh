@@ -318,6 +318,18 @@ else
   $SUDO chmod 600 "$ENV_FILE"
 fi
 
+# Без домена панель должна быть доступна снаружи — публикуем порт через override.
+OVERRIDE="$DIR/docker-compose.override.yml"
+if [ "$DRY_RUN" = "1" ]; then
+  [ -z "$DOMAIN" ] && echo "  [dry-run] публикация порта $APP_PORT через $OVERRIDE" \
+                   || echo "  [dry-run] порт наружу не публикуется, снаружи только Caddy"
+elif [ -z "$DOMAIN" ]; then
+  printf 'services:\n  app:\n    ports:\n      - "%s:%s:3000"\n' "$BIND" "$APP_PORT" \
+    | $SUDO tee "$OVERRIDE" >/dev/null
+else
+  $SUDO rm -f "$OVERRIDE"
+fi
+
 # ── 4. Запуск ────────────────────────────────────────────────────────────────
 say "Собираю и запускаю контейнеры (первый раз это пара минут)…"
 if [ "$DRY_RUN" = "1" ]; then
@@ -337,7 +349,8 @@ fi
 if [ "$DRY_RUN" != "1" ]; then
   say "Жду ответа приложения…"
   for _ in $(seq 1 30); do
-    if curl -fsS --max-time 3 "http://127.0.0.1:$APP_PORT/healthz" >/dev/null 2>&1; then
+    if (cd "$DIR" && $SUDO docker compose exec -T app node -e \
+        "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))") >/dev/null 2>&1; then
       say "Приложение отвечает"
       break
     fi

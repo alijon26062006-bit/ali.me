@@ -163,6 +163,10 @@ cd ali.me && cp .env.example .env   # заполнить BOT_TOKEN, PUBLIC_URL, 
 docker compose --profile tls up -d --build   # без домена: docker compose up -d --build
 ```
 
+С доменом порт приложения наружу не публикуется — к нему ходит только Caddy
+по внутренней сети. Без домена `deploy.sh` добавляет `docker-compose.override.yml`
+с публикацией порта, чтобы панель открывалась по IP.
+
 **Только контейнер приложения, без Caddy:**
 
 ```bash

@@ -78,11 +78,21 @@ fi
 
 # ── 3. Приложение отвечает? ──────────────────────────────────────────────────
 head2 "Приложение"
-if curl -fsS --max-time 5 "http://127.0.0.1:$APP_PORT/healthz" >/dev/null 2>&1; then
-  ok "локально отвечает на порту $APP_PORT"
+if (cd "$DIR" && $SUDO docker compose exec -T app node -e \
+    "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))") >/dev/null 2>&1; then
+  ok "приложение отвечает внутри контейнера"
 else
-  bad "не отвечает на http://127.0.0.1:$APP_PORT/healthz"
+  bad "приложение не отвечает на /healthz"
   fix "смотрите логи: cd $DIR && $SUDO docker compose logs --tail=50 app"
+fi
+
+if [ -z "$DOMAIN" ]; then
+  if curl -fsS --max-time 5 "http://127.0.0.1:$APP_PORT/healthz" >/dev/null 2>&1; then
+    ok "панель отвечает на порту $APP_PORT"
+  else
+    bad "порт $APP_PORT не отвечает — панель снаружи не откроется"
+    fix "cd $DIR && $SUDO docker compose down --remove-orphans && $SUDO docker compose up -d"
+  fi
 fi
 
 # Связь наружу именно из контейнера: сервер может ходить в интернет, а контейнер — нет.
