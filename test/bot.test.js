@@ -169,6 +169,23 @@ test('первый запуск спрашивает страну, потом в
   assert.match(lastText(), /Итоги/);
 });
 
+test('повторный /start не спрашивает настройку заново', async () => {
+  await handleUpdate(message('/start'));
+  const again = [...sent].reverse().find((call) => call.method === 'sendMessage');
+  assert.equal(again.body.reply_markup?.inline_keyboard, undefined, 'кнопок стран быть не должно');
+  assert.match(again.body.text, /на связи/);
+  assert.match(again.body.text, /сменить в \/settings/);
+});
+
+test('кнопка в настройках возвращает мастер настройки', async () => {
+  await handleUpdate(callback('setup:0'));
+  const setup = [...sent].reverse().find((call) => call.method === 'sendMessage');
+  assert.deepEqual(
+    setup.body.reply_markup.inline_keyboard[0].map((button) => button.callback_data),
+    ['ctry:tj', 'ctry:ru', 'ctry:kz'],
+  );
+});
+
 test('чужие траты недоступны через колбэк другого пользователя', async () => {
   const [expense] = recentExpenses(USER.id, 1);
   const stranger = {

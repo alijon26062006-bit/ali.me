@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS processed_updates (
 );
 `);
 
+// Простые миграции: добавляем недостающие колонки в уже созданные базы.
+function addColumnIfMissing(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((info) => info.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+addColumnIfMissing('users', 'onboarded_at', 'TEXT');
+
 export function upsertUser({ id, first_name, username }) {
   db.prepare(
     `INSERT INTO users (id, first_name, username, currency, tz_offset)
@@ -75,6 +85,12 @@ export function upsertUser({ id, first_name, username }) {
 
 export function getUser(id) {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+}
+
+/** Отмечает, что пользователь прошёл первичную настройку — больше не спрашиваем. */
+export function markOnboarded(id) {
+  db.prepare("UPDATE users SET onboarded_at = datetime('now') WHERE id = ? AND onboarded_at IS NULL").run(id);
+  return getUser(id);
 }
 
 export function updateUser(id, fields) {

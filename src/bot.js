@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import {
-  upsertUser, updateUser, recentExpenses, getExpense, deleteExpense, deleteExpenseRange,
+  upsertUser, updateUser, markOnboarded, recentExpenses, getExpense, deleteExpense, deleteExpenseRange,
   listExpenses, setLimit, setPending, takePending, clearPending, markUpdateProcessed,
 } from './db.js';
 import {
@@ -719,7 +719,7 @@ async function handleCallback(query) {
     case 'cur': {
       const code = matchCurrency(rawId);
       if (!code) return answerCallbackQuery(query.id);
-      const updated = updateUser(user.id, { currency: code });
+      const updated = markOnboarded(updateUser(user.id, { currency: code }).id);
       rebaseExpenses(updated);
       await answerCallbackQuery(query.id, `Валюта: ${code}`);
       await editMessageText(chatId, messageId, `💱 Валюта итогов: <b>${code}</b>`);
@@ -727,7 +727,7 @@ async function handleCallback(query) {
     }
     case 'setup':
       await answerCallbackQuery(query.id);
-      return sendStart(user, chatId);
+      return sendStart(user, chatId, { force: true });
     case 'last':
       await answerCallbackQuery(query.id);
       return sendLast(user, chatId);
@@ -794,7 +794,10 @@ async function handleCallback(query) {
 
 /* --------------------------------- тексты --------------------------------- */
 
-async function sendStart(user, chatId) {
+async function sendStart(user, chatId, { force = false } = {}) {
+  // Настройку спрашиваем один раз: дальше /start просто напоминает, как пользоваться.
+  if (user.onboarded_at && !force) return sendIntro(user, chatId, { returning: true });
+
   return sendMessage(
     chatId,
     [
@@ -830,12 +833,19 @@ function currencyKeyboard(country) {
 
 const CURRENCY_LABEL = { TJS: '🇹🇯', RUB: '🇷🇺', KZT: '🇰🇿', UZS: '🇺🇿', USD: '💵', EUR: '💶' };
 
-/** Финал онбординга: короткая инструкция и постоянная клавиатура. */
-async function sendIntro(user, chatId) {
+/** Финал онбординга и обычное приветствие для тех, кто уже настроен. */
+async function sendIntro(user, chatId, { returning = false } = {}) {
+  const offset = user.tz_offset;
   const lines = [
-    '✅ Готово! Настроил под вас.',
+    returning
+      ? `🪙 <b>Копейка</b> на связи, ${escapeHtml(user.first_name || 'привет')}!`
+      : '✅ Готово! Настроил под вас.',
     '',
-    'Теперь просто напишите трату <b>одним сообщением</b>:',
+    returning
+      ? `Валюта итогов <b>${user.currency}</b>, время UTC${offset >= 0 ? '+' : ''}${offset / 60} — сменить в /settings.`
+      : null,
+    returning ? '' : null,
+    'Напишите трату <b>одним сообщением</b>:',
     '<blockquote>кофе 350\nтакси 900 работа\nобед 12$\nвчера продукты 120000</blockquote>',
     'Можно списком — по одной трате в строке. Категорию подберу сам,',
     'ошибусь — поправите кнопкой под сообщением.',
