@@ -115,6 +115,13 @@ export function deleteExpense(userId, id) {
   return db.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?').run(id, userId).changes > 0;
 }
 
+/** Удаляет траты, добавленные одним сообщением (диапазон id). */
+export function deleteExpenseRange(userId, fromId, toId) {
+  return db
+    .prepare('DELETE FROM expenses WHERE user_id = ? AND id BETWEEN ? AND ?')
+    .run(userId, Math.min(fromId, toId), Math.max(fromId, toId)).changes;
+}
+
 export function listExpenses(userId, { from, to, limit = 500, offset = 0, category } = {}) {
   const clauses = ['user_id = ?'];
   const params = [userId];

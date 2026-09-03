@@ -125,6 +125,50 @@ test('редактирование через кнопку заменяет тр
   assert.equal(updated.amount, 7000);
 });
 
+test('несколько трат одним сообщением — по одной на строку', async () => {
+  const before = recentExpenses(USER.id, 50).length;
+  await handleUpdate(
+    message('такси 700рублей до центра\n459 рублей завтрак с лимонадом\n1054 кофе и десерт\n600 такси до дома\n1700 продукты'),
+  );
+  const rows = recentExpenses(USER.id, 50).slice(0, 5);
+  assert.equal(recentExpenses(USER.id, 50).length, before + 5);
+  // валюта названа в первых строках и относится ко всему сообщению
+  assert.ok(rows.every((row) => row.currency === 'RUB'), 'все траты должны быть в рублях');
+  assert.deepEqual(
+    rows.map((row) => row.amount).sort((a, b) => a - b),
+    [459, 600, 700, 1054, 1700],
+  );
+  const byNote = new Map(rows.map((row) => [row.note, row.category]));
+  assert.equal(byNote.get('такси до центра'), 'transport');
+  assert.equal(byNote.get('продукты'), 'groceries');
+  assert.match(lastText(), /Записал <b>5 трат<\/b>/);
+});
+
+test('кнопка удаляет всю пачку трат из сообщения', async () => {
+  const before = recentExpenses(USER.id, 50).length;
+  await handleUpdate(message('хлеб 12\nмолоко 30'));
+  const [second, first] = recentExpenses(USER.id, 2);
+  await handleUpdate(callback(`delb:${first.id}:${second.id}`));
+  assert.equal(recentExpenses(USER.id, 50).length, before);
+});
+
+test('первый запуск спрашивает страну, потом валюту', async () => {
+  await handleUpdate(message('/start'));
+  const start = [...sent].reverse().find((call) => call.method === 'sendMessage');
+  const countries = start.body.reply_markup.inline_keyboard[0].map((button) => button.callback_data);
+  assert.deepEqual(countries, ['ctry:tj', 'ctry:ru', 'ctry:kz']);
+
+  await handleUpdate(callback('ctry:ru'));
+  const afterCountry = [...sent].reverse().find((call) => call.method === 'editMessageText');
+  assert.match(afterCountry.body.text, /Россия/);
+  assert.match(afterCountry.body.text, /UTC\+3/);
+  assert.equal(db.prepare('SELECT tz_offset FROM users WHERE id = ?').get(USER.id).tz_offset, 180);
+
+  await handleUpdate(callback('cur:RUB'));
+  assert.equal(db.prepare('SELECT currency FROM users WHERE id = ?').get(USER.id).currency, 'RUB');
+  assert.match(lastText(), /Итоги/);
+});
+
 test('чужие траты недоступны через колбэк другого пользователя', async () => {
   const [expense] = recentExpenses(USER.id, 1);
   const stranger = {

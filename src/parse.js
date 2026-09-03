@@ -15,6 +15,19 @@ const DATE_WORDS = [
 const CURRENCY_SYMBOLS = "$€₽₸₴₺£";
 
 /**
+ * Несколько трат одним сообщением: каждая строка — отдельная запись.
+ * Возвращает по элементу на строку, `parsed: null` — строку разобрать не вышло.
+ */
+export function parseExpenseLines(input, options = {}) {
+  return String(input || '')
+    .split(/[\n;]+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 30)
+    .map((line) => ({ line, parsed: parseExpense(line, options) }));
+}
+
+/**
  * Разбирает сообщение вида «кофе 350», «такси 900 работа», «5$ обед вчера».
  *
  * @returns {{amount:number, currency:string|null, note:string, category:string,

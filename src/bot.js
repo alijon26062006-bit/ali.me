@@ -1,12 +1,12 @@
 import { config } from './config.js';
 import {
-  upsertUser, updateUser, recentExpenses, getExpense, deleteExpense,
+  upsertUser, updateUser, recentExpenses, getExpense, deleteExpense, deleteExpenseRange,
   listExpenses, setLimit, setPending, takePending, clearPending, markUpdateProcessed,
 } from './db.js';
 import {
   sendMessage, editMessageText, answerCallbackQuery, sendDocument, downloadFile, escapeHtml,
 } from './telegram.js';
-import { parseExpense } from './parse.js';
+import { parseExpense, parseExpenseLines } from './parse.js';
 import { CATEGORIES, getCategory, findExplicitCategory } from './categories.js';
 import { formatMoney, matchCurrency, CURRENCY_CODES } from './money.js';
 import { periodRange, formatDayHuman, formatDate, addDays, dayKey } from './time.js';
@@ -15,6 +15,7 @@ import {
 } from './service.js';
 import { issueLoginLink } from './auth.js';
 import { readReceipt, ocrAvailable } from './ocr.js';
+import { understandExpenses, smartParseAvailable } from './smart.js';
 
 export const BOT_COMMANDS = [
   { command: 'start', description: 'Начать и посмотреть подсказку' },
@@ -29,6 +30,18 @@ export const BOT_COMMANDS = [
   { command: 'settings', description: 'Валюта и часовой пояс' },
   { command: 'help', description: 'Как пользоваться' },
 ];
+
+/**
+ * Страны для первого запуска: часовой пояс и валюта по умолчанию.
+ * Всё остальное потом меняется командами /tz и /currency.
+ */
+const COUNTRIES = [
+  { key: 'tj', flag: '🇹🇯', title: 'Таджикистан', tz: 300, currency: 'TJS' },
+  { key: 'ru', flag: '🇷🇺', title: 'Россия', tz: 180, currency: 'RUB' },
+  { key: 'kz', flag: '🇰🇿', title: 'Казахстан', tz: 300, currency: 'KZT' },
+];
+
+const countryByKey = (key) => COUNTRIES.find((country) => country.key === key);
 
 const QUICK_KEYBOARD = {
   keyboard: [
@@ -140,8 +153,29 @@ async function handleCommand(user, chatId, text) {
 /* ---------------------------------- траты --------------------------------- */
 
 async function handleExpenseText(user, chatId, text) {
-  const parsed = parseExpense(text, { defaultCurrency: user.currency });
-  if (!parsed) {
+  const entries = parseExpenseLines(text, { defaultCurrency: user.currency });
+
+  // Строки, которые не поддались правилам, отдаём ИИ — он понимает
+  // «два кофе по 15 тысяч» и прочую живую речь.
+  const unparsed = entries.filter((entry) => !entry.parsed);
+  if (unparsed.length > 0 && smartParseAvailable()) {
+    try {
+      const guesses = await understandExpenses(unparsed.map((entry) => entry.line), {
+        currency: user.currency,
+      });
+      for (const guess of guesses || []) {
+        const target = unparsed[guess.lineIndex];
+        if (target && !target.parsed) target.parsed = guess;
+      }
+    } catch (error) {
+      console.error('smart parse failed', error.message);
+    }
+  }
+
+  applyMessageCurrency(entries);
+
+  const parsedEntries = entries.filter((entry) => entry.parsed);
+  if (parsedEntries.length === 0) {
     return sendMessage(
       chatId,
       [
@@ -149,24 +183,85 @@ async function handleExpenseText(user, chatId, text) {
         '',
         'Напишите трату одним сообщением:',
         '<blockquote>кофе 350\nтакси 900 транспорт\nобед 12$\nвчера продукты 120000</blockquote>',
-        'Сумма может стоять где угодно — я найду её сам.',
+        'Несколько трат можно прислать списком — по одной в строке.',
       ].join('\n'),
     );
   }
 
-  const spentAt = parsed.dayShift ? addDays(new Date(), parsed.dayShift) : new Date();
-  const expense = addExpense(user, {
-    amount: parsed.amount,
-    currency: parsed.currency,
-    category: parsed.category,
-    note: parsed.note,
-    spentAt,
-    source: 'bot',
-  });
+  const created = parsedEntries.map(({ parsed }) =>
+    addExpense(user, {
+      amount: parsed.amount,
+      currency: parsed.currency,
+      category: parsed.category,
+      note: parsed.note,
+      spentAt: parsed.dayShift ? addDays(new Date(), parsed.dayShift) : new Date(),
+      source: 'bot',
+    }),
+  );
 
-  return sendMessage(chatId, expenseConfirmation(user, expense, parsed), {
-    reply_markup: expenseKeyboard(expense.id),
+  const skipped = entries.filter((entry) => !entry.parsed).map((entry) => entry.line);
+
+  if (created.length === 1) {
+    const text = expenseConfirmation(user, created[0], parsedEntries[0].parsed);
+    return sendMessage(chatId, skipped.length ? `${text}\n\n${skippedNote(skipped)}` : text, {
+      reply_markup: expenseKeyboard(created[0].id),
+    });
+  }
+
+  return sendMessage(chatId, batchConfirmation(user, created, skipped), {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '🧾 Список', callback_data: 'last:0' },
+          { text: '🗑 Удалить всё', callback_data: `delb:${created[0].id}:${created[created.length - 1].id}` },
+        ],
+      ],
+    },
   });
+}
+
+/**
+ * Валюта, названная в одной строке сообщения, распространяется на остальные:
+ * «такси 700 рублей / 459 завтрак» — обе траты в рублях.
+ */
+function applyMessageCurrency(entries) {
+  const explicit = entries.find((entry) => entry.parsed?.currencyExplicit)?.parsed.currency;
+  if (!explicit) return;
+  for (const entry of entries) {
+    if (entry.parsed && !entry.parsed.currencyExplicit) entry.parsed.currency = explicit;
+  }
+}
+
+function skippedNote(skipped) {
+  return `<i>Не понял: ${skipped.map((line) => escapeHtml(line)).join(' · ')}</i>`;
+}
+
+/** Одно сообщение — несколько трат: показываем список и общий итог. */
+function batchConfirmation(user, expenses, skipped = []) {
+  const money = (value, code = user.currency) => escapeHtml(formatMoney(value, code));
+  const total = expenses.reduce((sum, expense) => sum + expense.amount_base, 0);
+  const today = buildSummary(user, periodRange('today', user.tz_offset));
+  const month = buildSummary(user, periodRange('month', user.tz_offset));
+
+  const lines = [
+    `✅  Записал <b>${expenses.length} ${plural(expenses.length, 'трату', 'траты', 'трат')}</b> на <b>${money(total)}</b>`,
+    '',
+  ];
+
+  for (const expense of expenses) {
+    const category = getCategory(expense.category);
+    lines.push(
+      `${category.emoji} <b>${money(expense.amount, expense.currency)}</b> — ${escapeHtml(expense.note)}`,
+    );
+  }
+
+  lines.push('', `📅 Сегодня <b>${money(today.total)}</b>`, `📆 Месяц <b>${money(month.total)}</b>`);
+
+  const warnings = [...new Set(expenses.map((expense) => limitWarning(user, expense.category)))].filter(Boolean);
+  if (warnings.length) lines.push('', ...warnings.map((warning) => escapeHtml(warning)));
+  if (skipped.length) lines.push('', skippedNote(skipped));
+
+  return lines.join('\n');
 }
 
 function expenseConfirmation(user, expense, parsed) {
@@ -433,7 +528,9 @@ async function sendSettings(user, chatId) {
       ? '📷 Распознавание чеков по фото: <b>включено</b>'
       : '📷 Распознавание чеков: выключено',
   ];
-  return sendMessage(chatId, lines.join('\n'));
+  return sendMessage(chatId, lines.join('\n'), {
+    reply_markup: { inline_keyboard: [[{ text: '🌍 Сменить страну и валюту', callback_data: 'setup:0' }]] },
+  });
 }
 
 async function handleCurrency(user, chatId, args) {
@@ -589,9 +686,57 @@ async function handleCallback(query) {
   const chatId = query.message?.chat?.id;
   const messageId = query.message?.message_id;
   const [action, rawId, extra] = String(query.data || '').split(':');
-  const id = Number(rawId);
+  if (!chatId) return answerCallbackQuery(query.id);
 
-  if (!chatId || !Number.isFinite(id)) return answerCallbackQuery(query.id);
+  // Шаги настройки и групповые действия — они не привязаны к одной трате.
+  switch (action) {
+    case 'ctry': {
+      const country = countryByKey(rawId);
+      if (!country) return answerCallbackQuery(query.id);
+      updateUser(user.id, { tz_offset: country.tz });
+      await answerCallbackQuery(query.id, `${country.flag} ${country.title}`);
+      return editMessageText(
+        chatId,
+        messageId,
+        [
+          `${country.flag} <b>${escapeHtml(country.title)}</b> — время UTC${country.tz >= 0 ? '+' : ''}${country.tz / 60}`,
+          '',
+          'В какой валюте считать итоги?',
+          '<i>Траты можно писать в любой валюте — пересчитаю сам.</i>',
+        ].join('\n'),
+        { reply_markup: currencyKeyboard(country) },
+      );
+    }
+    case 'cur': {
+      const code = matchCurrency(rawId);
+      if (!code) return answerCallbackQuery(query.id);
+      const updated = updateUser(user.id, { currency: code });
+      rebaseExpenses(updated);
+      await answerCallbackQuery(query.id, `Валюта: ${code}`);
+      await editMessageText(chatId, messageId, `💱 Валюта итогов: <b>${code}</b>`);
+      return sendIntro(updated, chatId);
+    }
+    case 'setup':
+      await answerCallbackQuery(query.id);
+      return sendStart(user, chatId);
+    case 'last':
+      await answerCallbackQuery(query.id);
+      return sendLast(user, chatId);
+    case 'delb': {
+      const removed = deleteExpenseRange(user.id, Number(rawId), Number(extra));
+      await answerCallbackQuery(query.id, removed ? 'Удалено' : 'Уже удалено');
+      return editMessageText(
+        chatId,
+        messageId,
+        `🗑 Удалил ${removed} ${plural(removed, 'трату', 'траты', 'трат')} из этого сообщения.`,
+      );
+    }
+    default:
+      break;
+  }
+
+  const id = Number(rawId);
+  if (!Number.isFinite(id)) return answerCallbackQuery(query.id);
 
   const expense = getExpense(user.id, id);
   if (!expense) {
@@ -631,7 +776,7 @@ async function handleCallback(query) {
       await answerCallbackQuery(query.id, 'Пришлите новый вариант');
       return sendMessage(
         chatId,
-        `Пришлите исправленную трату одним сообщением, например <b>кофе 400</b>.\n/cancel — отмена.`,
+        'Пришлите исправленную трату одним сообщением, например <b>кофе 400</b>.\n/cancel — отмена.',
       );
     default:
       return answerCallbackQuery(query.id);
@@ -641,12 +786,50 @@ async function handleCallback(query) {
 /* --------------------------------- тексты --------------------------------- */
 
 async function sendStart(user, chatId) {
+  return sendMessage(
+    chatId,
+    [
+      `🪙 <b>Копейка</b> — трекер расходов, ${escapeHtml(user.first_name || 'привет')}!`,
+      '',
+      'Настроим за два касания. Откуда вы?',
+      '<i>Это нужно, чтобы «сегодня» считалось по вашему времени.</i>',
+    ].join('\n'),
+    {
+      reply_markup: {
+        inline_keyboard: [
+          COUNTRIES.map((country) => ({
+            text: `${country.flag} ${country.title}`,
+            callback_data: `ctry:${country.key}`,
+          })),
+        ],
+      },
+    },
+  );
+}
+
+/** Второй шаг онбординга: валюта, в которой считать итоги. */
+function currencyKeyboard(country) {
+  const codes = [...new Set([country.currency, 'USD', 'RUB', 'KZT', 'TJS', 'UZS'])].slice(0, 6);
+  const buttons = codes.map((code) => ({
+    text: `${CURRENCY_LABEL[code] || ''} ${code}`.trim(),
+    callback_data: `cur:${code}`,
+  }));
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
+  return { inline_keyboard: rows };
+}
+
+const CURRENCY_LABEL = { TJS: '🇹🇯', RUB: '🇷🇺', KZT: '🇰🇿', UZS: '🇺🇿', USD: '💵', EUR: '💶' };
+
+/** Финал онбординга: короткая инструкция и постоянная клавиатура. */
+async function sendIntro(user, chatId) {
   const lines = [
-    `🪙 <b>Копейка</b> — трекер расходов, ${escapeHtml(user.first_name || 'привет')}!`,
+    '✅ Готово! Настроил под вас.',
     '',
-    'Напишите трату <b>одним сообщением</b> — я сам разберу сумму и категорию:',
-    '<blockquote>кофе 350\nтакси 900 работа\nобед 12$\nвчера продукты 120000\nпродукты 12к</blockquote>',
-    'Ошибусь с категорией — поправите кнопкой под сообщением.',
+    'Теперь просто напишите трату <b>одним сообщением</b>:',
+    '<blockquote>кофе 350\nтакси 900 работа\nобед 12$\nвчера продукты 120000</blockquote>',
+    'Можно списком — по одной трате в строке. Категорию подберу сам,',
+    'ошибусь — поправите кнопкой под сообщением.',
     '',
     '📅 Итоги: /today · /week · /month',
     '📊 Графики и правки: /app',
