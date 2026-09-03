@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Копейка — расходы</title>
+<title>Копейка — куда уходят деньги</title>
+<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
 <link rel="stylesheet" href="/styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪙</text></svg>">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -11,7 +13,13 @@
 <body>
   <div class="wrap">
     <header class="topbar">
-      <div class="brand">🪙 <span>Копейка</span></div>
+      <div class="brand">
+        <div class="brand-mark">🪙</div>
+        <div>
+          <div class="brand-name">Копейка</div>
+          <div class="brand-sub" id="greeting">расходы под контролем</div>
+        </div>
+      </div>
       <div class="month-nav" id="month-nav" hidden>
         <button type="button" id="month-prev" aria-label="Предыдущий месяц">‹</button>
         <span id="month-label">—</span>
@@ -25,13 +33,12 @@
       <button role="tab" data-period="month" aria-selected="true">Месяц</button>
     </div>
 
-    <section class="card">
-      <div class="total-row">
-        <div>
-          <div class="total" id="total">—</div>
-          <div class="total-meta" id="total-meta">загружаю…</div>
-        </div>
-      </div>
+    <section class="card hero">
+      <div class="hero-label" id="hero-label">Потрачено за месяц</div>
+      <div class="total num" id="total">—</div>
+      <div class="total-meta" id="total-meta">загружаю…</div>
+      <div class="hero-stats" id="hero-stats"></div>
+      <div class="spark" id="spark" aria-hidden="true" hidden></div>
     </section>
 
     <section class="card">
@@ -39,35 +46,49 @@
         <input id="quick-input" name="text" placeholder="кофе 350" enterkeyhint="done" aria-label="Новая трата">
         <button class="primary" type="submit">Записать</button>
       </form>
-      <div class="hint">Одним сообщением: <b>такси 900 транспорт</b>, <b>обед 12$</b>, <b>вчера продукты 120000</b></div>
+      <div class="chips" id="chips"></div>
     </section>
 
     <section class="card" id="chart-card">
-      <h2 class="section-title">По категориям</h2>
+      <div class="card-head">
+        <h2 class="section-title">На что уходит</h2>
+        <span class="section-note" id="cat-note"></span>
+      </div>
       <div class="charts">
-        <svg id="donut" viewBox="0 0 200 200" role="img" aria-label="Расходы по категориям"></svg>
+        <div class="donut-wrap">
+          <svg id="donut" viewBox="0 0 220 220" role="img" aria-label="Расходы по категориям"></svg>
+        </div>
         <div class="legend" id="legend"></div>
       </div>
     </section>
 
     <section class="card" id="days-card">
-      <h2 class="section-title">По дням</h2>
+      <div class="card-head">
+        <h2 class="section-title">По дням</h2>
+        <span class="section-note" id="days-note"></span>
+      </div>
       <div class="bars" id="bars" role="img" aria-label="Расходы по дням"></div>
       <div class="bars-axis" id="bars-axis"></div>
     </section>
 
     <section class="card" id="limits-card" hidden>
-      <h2 class="section-title">Лимиты на месяц</h2>
+      <div class="card-head">
+        <h2 class="section-title">Лимиты на месяц</h2>
+        <span class="section-note">предупреждаю на 80%</span>
+      </div>
       <div class="limits" id="limits"></div>
     </section>
 
     <section class="card">
-      <h2 class="section-title">Траты <span id="filter-note"></span></h2>
+      <div class="card-head">
+        <h2 class="section-title">Траты</h2>
+        <span class="section-note" id="filter-note"></span>
+      </div>
       <div id="list"></div>
     </section>
 
     <section class="card">
-      <h2 class="section-title">Настройки</h2>
+      <div class="card-head"><h2 class="section-title">Настройки</h2></div>
       <div class="settings-grid">
         <div>
           <label for="currency">Валюта итогов</label>

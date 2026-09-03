@@ -1,5 +1,9 @@
 /**
- * Категории трат. Ключ категории стабилен и хранится в базе,
+ * Категории трат.
+ *
+ * Цвета — из проверенной валидатором категориальной палитры (см. README):
+ * здесь светлые значения для API, парные тёмные живут в CSS-переменных
+ * --cat-<ключ>, чтобы графики читались в обеих темах. Ключ категории стабилен и хранится в базе,
  * название и эмодзи используются в боте и панели.
  *
  * `aliases` — слова, по которым категорию можно указать явно
@@ -11,7 +15,7 @@ export const CATEGORIES = [
     key: 'groceries',
     title: 'Продукты',
     emoji: '🛒',
-    color: '#4ade80',
+    color: '#1baf7a',
     aliases: ['продукты', 'еда', 'groceries', 'food', 'oziq'],
     keywords: [
       'магазин', 'супермаркет', 'продукт', 'молоко', 'хлеб', 'яйца', 'мясо', 'курица',
@@ -23,7 +27,7 @@ export const CATEGORIES = [
     key: 'cafe',
     title: 'Кафе и рестораны',
     emoji: '☕',
-    color: '#fbbf24',
+    color: '#eb6834',
     aliases: ['кафе', 'ресторан', 'cafe', 'restaurant'],
     keywords: [
       'кофе', 'капучино', 'латте', 'американо', 'чай', 'обед', 'ужин', 'завтрак', 'ланч',
@@ -36,7 +40,7 @@ export const CATEGORIES = [
     key: 'transport',
     title: 'Транспорт',
     emoji: '🚕',
-    color: '#38bdf8',
+    color: '#2a78d6',
     aliases: ['транспорт', 'transport', 'дорога'],
     keywords: [
       'такси', 'яндекс', 'yandex go', 'uber', 'bolt', 'мийок', 'метро', 'автобус', 'маршрутка',
@@ -48,7 +52,7 @@ export const CATEGORIES = [
     key: 'home',
     title: 'Дом и счета',
     emoji: '🏠',
-    color: '#a78bfa',
+    color: '#4a3aa7',
     aliases: ['дом', 'жильё', 'жилье', 'счета', 'home', 'uy'],
     keywords: [
       'аренда', 'квартира', 'коммуналка', 'коммунальные', 'свет', 'электричество', 'вода счет',
@@ -60,7 +64,7 @@ export const CATEGORIES = [
     key: 'connection',
     title: 'Связь и подписки',
     emoji: '📱',
-    color: '#22d3ee',
+    color: '#008300',
     aliases: ['связь', 'подписки', 'подписка', 'интернет', 'internet'],
     keywords: [
       'мобильная связь', 'телефон', 'интернет', 'вайфай', 'wifi', 'ucell', 'beeline', 'uzmobile',
@@ -72,7 +76,7 @@ export const CATEGORIES = [
     key: 'health',
     title: 'Здоровье',
     emoji: '💊',
-    color: '#f472b6',
+    color: '#e87ba4',
     aliases: ['здоровье', 'health', 'аптека'],
     keywords: [
       'аптека', 'лекарств', 'таблетк', 'врач', 'клиника', 'анализы', 'стоматолог', 'зубной',
@@ -83,7 +87,7 @@ export const CATEGORIES = [
     key: 'sport',
     title: 'Спорт',
     emoji: '🏋️',
-    color: '#34d399',
+    color: '#0e9bb0',
     aliases: ['спорт', 'sport', 'фитнес'],
     keywords: ['зал', 'спортзал', 'фитнес', 'бассейн', 'тренер', 'йога', 'gym', 'fitness', 'pool'],
   },
@@ -91,7 +95,7 @@ export const CATEGORIES = [
     key: 'shopping',
     title: 'Покупки',
     emoji: '🛍️',
-    color: '#fb923c',
+    color: '#eda100',
     aliases: ['покупки', 'shopping', 'одежда'],
     keywords: [
       'одежда', 'обувь', 'кроссовк', 'футболка', 'джинсы', 'куртка', 'носки', 'сумка',
@@ -103,7 +107,7 @@ export const CATEGORIES = [
     key: 'fun',
     title: 'Развлечения',
     emoji: '🎬',
-    color: '#c084fc',
+    color: '#e34948',
     aliases: ['развлечения', 'fun', 'досуг'],
     keywords: [
       'кино', 'театр', 'концерт', 'игра', 'steam', 'playstation', 'боулинг', 'бильярд',
@@ -114,7 +118,7 @@ export const CATEGORIES = [
     key: 'education',
     title: 'Образование',
     emoji: '📚',
-    color: '#60a5fa',
+    color: '#8a8f1e',
     aliases: ['образование', 'учеба', 'учёба', 'education'],
     keywords: [
       'курс', 'учебник', 'репетитор', 'школа', 'универ', 'колледж', 'контракт', 'семинар',
@@ -125,7 +129,7 @@ export const CATEGORIES = [
     key: 'gifts',
     title: 'Подарки и помощь',
     emoji: '🎁',
-    color: '#f87171',
+    color: '#9b4fd1',
     aliases: ['подарки', 'подарок', 'gifts', 'помощь'],
     keywords: ['подарок', 'цветы', 'донат', 'благотвор', 'свадьба', 'день рождения', 'gift', 'flowers'],
   },
@@ -133,7 +137,7 @@ export const CATEGORIES = [
     key: 'pets',
     title: 'Питомцы',
     emoji: '🐾',
-    color: '#facc15',
+    color: '#96601f',
     aliases: ['питомцы', 'животные', 'pets'],
     keywords: ['корм', 'ветеринар', 'кот', 'кошка', 'собака', 'наполнитель', 'vet', 'pet'],
   },
@@ -141,7 +145,7 @@ export const CATEGORIES = [
     key: 'other',
     title: 'Прочее',
     emoji: '💸',
-    color: '#94a3b8',
+    color: '#7a8290',
     aliases: ['прочее', 'другое', 'other', 'misc'],
     keywords: [],
   },

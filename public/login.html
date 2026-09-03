@@ -3,29 +3,48 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Копейка — вход через Telegram</title>
-<meta name="description" content="Трекер личных расходов в Telegram: пишете «кофе 350» — трата сохраняется.">
+<title>Копейка — трекер расходов в Telegram</title>
+<meta name="description" content="Пишете боту «кофе 350» — трата записана. Панель показывает, куда уходят деньги. Вход через Telegram, без регистрации.">
+<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
 <link rel="stylesheet" href="/styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪙</text></svg>">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <main class="login">
-    <div class="card">
-      <div class="logo">🪙</div>
+    <div class="login-card">
+      <div class="login-logo">🪙</div>
       <h1>Копейка</h1>
-      <p>Трекер расходов, который живёт в Telegram. Панель открывается через бота — отдельный пароль не нужен.</p>
+      <p class="lead">Трекер расходов, который живёт в Telegram.<br>Одно сообщение — и трата записана.</p>
+
+      <div class="bubbles">
+        <div class="bubble me">кофе 350</div>
+        <div class="bubble bot">✅ <b>350 so'm</b> · ☕ Кафе и рестораны<small>Сегодня: 1 250 so'm · Месяц: 45 000 so'm</small></div>
+        <div class="bubble me">такси 900 работа</div>
+      </div>
+
+      <a class="cta" id="bot-link" href="https://t.me/">Открыть бота →</a>
+
       <ol class="steps">
-        <li>Откройте бота и напишите трату: <b>кофе 350</b></li>
-        <li>Отправьте команду <b>/app</b></li>
-        <li>Нажмите «Открыть панель» — вы уже внутри</li>
+        <li><b>1</b><span>Напишите боту трату: <b style="all:unset;font-weight:600">кофе 350</b></span></li>
+        <li><b>2</b><span>Отправьте команду <b style="all:unset;font-weight:600">/app</b></span></li>
+        <li><b>3</b><span>Нажмите «Открыть панель» — вход без пароля</span></li>
       </ol>
-      <a class="primary" id="bot-link" href="https://t.me/">Открыть бота</a>
-      <p class="hint" id="status"></p>
+
+      <div class="features">
+        <div class="feature"><b>Категории сами</b>«кофе» → Кафе, «такси» → Транспорт</div>
+        <div class="feature"><b>Итоги и графики</b>день, неделя, месяц</div>
+        <div class="feature"><b>Любая валюта</b>«обед 12$» пересчитается</div>
+        <div class="feature"><b>Фото чека</b>сумма распознаётся сама</div>
+      </div>
+
+      <p class="note" id="status">Панель открывается через бота — отдельный пароль не нужен.</p>
     </div>
   </main>
+
   <script>
-    // Если панель открыта внутри Telegram — логинимся сразу, без ссылок.
+    // Внутри Telegram логинимся сразу, без ссылок.
     const tg = window.Telegram?.WebApp;
     if (tg?.initData) {
       tg.ready();
@@ -34,20 +53,20 @@
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ initData: tg.initData }),
-      }).then((r) => {
-        if (r.ok) location.replace('/');
-        else document.getElementById('status').textContent = 'Не удалось войти через Telegram — откройте панель командой /app в боте.';
+      }).then((response) => {
+        if (response.ok) location.replace('/');
+        else document.getElementById('status').textContent =
+          'Не удалось войти через Telegram — откройте панель командой /app в боте.';
       });
     }
 
     fetch('/api/public')
-      .then((r) => r.json())
+      .then((response) => response.json())
       .then((data) => {
-        if (data.botUsername) {
-          const link = document.getElementById('bot-link');
-          link.href = 'https://t.me/' + data.botUsername;
-          link.textContent = 'Открыть @' + data.botUsername;
-        }
+        if (!data.botUsername) return;
+        const link = document.getElementById('bot-link');
+        link.href = 'https://t.me/' + data.botUsername;
+        link.textContent = '@' + data.botUsername + ' →';
       })
       .catch(() => {});
   </script>

@@ -11,9 +11,12 @@
 | 🎬 Видео | `https://…` — *ссылка на демо 2–3 минуты* |
 
 <p align="center">
-  <img src="docs/panel.png" alt="Веб-панель на телефоне" width="320">
-  <img src="docs/panel-edit.png" alt="Правка траты прямо в списке" width="320">
+  <img src="docs/panel.png" alt="Панель на телефоне" width="250">
+  <img src="docs/panel-edit.png" alt="Правка траты прямо в списке" width="250">
+  <img src="docs/login.png" alt="Вход через Telegram" width="250">
 </p>
+
+<p align="center"><i>Тёмная и светлая темы, мобильная вёрстка, графики нарисованы вручную — без сборки и внешних библиотек.</i></p>
 
 ---
 

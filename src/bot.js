@@ -145,11 +145,11 @@ async function handleExpenseText(user, chatId, text) {
     return sendMessage(
       chatId,
       [
-        'Не нашёл сумму 🤔',
+        '🤔 Не нашёл сумму',
         '',
-        'Напишите трату одним сообщением: <b>кофе 350</b>',
-        'Можно с категорией: <b>такси 900 транспорт</b>',
-        'Можно в другой валюте: <b>обед 12$</b>',
+        'Напишите трату одним сообщением:',
+        '<blockquote>кофе 350\nтакси 900 транспорт\nобед 12$\nвчера продукты 120000</blockquote>',
+        'Сумма может стоять где угодно — я найду её сам.',
       ].join('\n'),
     );
   }
@@ -173,33 +173,34 @@ function expenseConfirmation(user, expense, parsed) {
   const category = getCategory(expense.category);
   const today = buildSummary(user, periodRange('today', user.tz_offset));
   const month = buildSummary(user, periodRange('month', user.tz_offset));
+  const money = (value, code = user.currency) => escapeHtml(formatMoney(value, code));
 
   const lines = [
-    `✅ <b>${escapeHtml(formatMoney(expense.amount, expense.currency))}</b> · ${category.emoji} ${escapeHtml(category.title)}`,
-    escapeHtml(expense.note),
+    `✅  <b>${money(expense.amount, expense.currency)}</b>  ·  ${category.emoji} ${escapeHtml(category.title)}`,
+    `<i>${escapeHtml(expense.note)}</i>`,
   ];
 
   if (expense.currency !== user.currency) {
-    lines.push(`≈ ${escapeHtml(formatMoney(expense.amount_base, user.currency))}`);
+    lines.push(`≈ ${money(expense.amount_base)} в итогах`);
   }
   if (dayKey(expense.spent_at, user.tz_offset) !== dayKey(new Date(), user.tz_offset)) {
-    lines.push(`🗓 ${formatDayHuman(dayKey(expense.spent_at, user.tz_offset), user.tz_offset)}`);
+    lines.push(`🗓 записал на ${formatDayHuman(dayKey(expense.spent_at, user.tz_offset), user.tz_offset)}`);
   }
 
   lines.push(
     '',
-    `Сегодня: <b>${escapeHtml(formatMoney(today.total, user.currency))}</b> · ` +
-      `Месяц: <b>${escapeHtml(formatMoney(month.total, user.currency))}</b>`,
+    `📅 Сегодня <b>${money(today.total)}</b>`,
+    `📆 Месяц <b>${money(month.total)}</b>`,
   );
 
   if (parsed?.categorySource === 'default') {
-    lines.push('<i>Категорию не угадал — поставьте её кнопкой 🗂</i>');
+    lines.push('', '<i>Категорию не угадал — поставьте её кнопкой 🗂</i>');
   }
 
   const warning = limitWarning(user, expense.category);
   if (warning) lines.push('', escapeHtml(warning));
 
-  return lines.filter((line) => line !== undefined).join('\n');
+  return lines.join('\n');
 }
 
 function expenseKeyboard(id) {
@@ -290,17 +291,27 @@ async function undoLast(user, chatId) {
 }
 
 async function sendLast(user, chatId) {
-  const rows = recentExpenses(user.id, 6);
+  // Показываем в том же порядке, что и панель: сначала свежие по дате траты.
+  const rows = recentExpenses(user.id, 6).sort(
+    (a, b) => Date.parse(b.spent_at) - Date.parse(a.spent_at) || b.id - a.id,
+  );
   if (rows.length === 0) {
-    return sendMessage(chatId, 'Трат пока нет. Напишите, например: <b>кофе 350</b>');
+    return sendMessage(chatId, ['🧾 <b>Последние траты</b>', '', 'Пока пусто. Напишите, например: <code>кофе 350</code>'].join('\n'));
   }
+
   const lines = ['🧾 <b>Последние траты</b>', ''];
   const keyboard = [];
+  let currentDay = null;
+
   rows.forEach((row, index) => {
+    const day = dayKey(row.spent_at, user.tz_offset);
+    if (day !== currentDay) {
+      currentDay = day;
+      lines.push(`<i>${formatDayHuman(day, user.tz_offset)}</i>`);
+    }
     const category = getCategory(row.category);
     lines.push(
-      `${index + 1}. <b>${escapeHtml(formatMoney(row.amount, row.currency))}</b> · ${category.emoji} ${escapeHtml(row.note)}` +
-        ` <i>(${formatDayHuman(dayKey(row.spent_at, user.tz_offset), user.tz_offset)}, #${row.id})</i>`,
+      `${index + 1}. ${category.emoji} <b>${escapeHtml(formatMoney(row.amount, row.currency))}</b> — ${escapeHtml(row.note)}`,
     );
     keyboard.push([
       { text: `✏️ ${index + 1}`, callback_data: `edit:${row.id}` },
@@ -308,6 +319,8 @@ async function sendLast(user, chatId) {
       { text: `🗑 ${index + 1}`, callback_data: `del:${row.id}` },
     ]);
   });
+
+  lines.push('', '<i>✏️ исправить · 🗂 категория · 🗑 удалить</i>');
   return sendMessage(chatId, lines.join('\n'), { reply_markup: { inline_keyboard: keyboard } });
 }
 
@@ -322,39 +335,57 @@ async function sendPeriod(user, chatId, period) {
 }
 
 export function renderSummary(user, summary, period) {
+  const money = (value) => escapeHtml(formatMoney(value, user.currency));
   const titles = {
-    today: `📅 Сегодня, ${formatDate(dayKey(new Date(), user.tz_offset))}`,
-    week: '🗓 Эта неделя',
-    month: '📆 Этот месяц',
+    today: `📅 <b>Сегодня</b>, ${formatDate(dayKey(new Date(), user.tz_offset))}`,
+    week: '🗓 <b>Эта неделя</b>',
+    month: '📆 <b>Этот месяц</b>',
   };
-  const lines = [titles[period] || '📊 Итоги', ''];
+  const lines = [titles[period] || '📊 <b>Итоги</b>', ''];
 
   if (summary.count === 0) {
-    lines.push('Пока пусто. Напишите трату одним сообщением: <b>кофе 350</b>');
+    lines.push(
+      'Пока пусто — и это хорошая новость 🙂',
+      '',
+      'Запишите трату одним сообщением:',
+      '<code>кофе 350</code>',
+    );
     return lines.join('\n');
   }
 
-  lines.push(`Итого: <b>${escapeHtml(formatMoney(summary.total, user.currency))}</b> · ${summary.count} ${plural(summary.count, 'трата', 'траты', 'трат')}`);
-  if (period !== 'today') {
-    lines.push(`В среднем: ${escapeHtml(formatMoney(summary.average, user.currency))} в день`);
-  }
-  lines.push('');
+  lines.push(`💰 <b>${money(summary.total)}</b>`);
+  const meta = [`${summary.count} ${plural(summary.count, 'трата', 'траты', 'трат')}`];
+  if (period !== 'today') meta.push(`${formatMoney(summary.average, user.currency)} в день`);
+  lines.push(escapeHtml(meta.join('  ·  ')), '');
 
-  const top = summary.byCategory.slice(0, 8);
-  const max = Math.max(...top.map((c) => c.total), 1);
+  const top = summary.byCategory.slice(0, 6);
   for (const category of top) {
-    const bar = '▇'.repeat(Math.max(1, Math.round((category.total / max) * 10)));
     lines.push(
-      `${category.emoji} ${escapeHtml(category.title)} — <b>${escapeHtml(formatMoney(category.total, user.currency))}</b> · ${Math.round(category.share * 100)}%`,
+      `${category.emoji} ${escapeHtml(category.title)} — <b>${money(category.total)}</b> · ${Math.round(category.share * 100)}%`,
+      `<code>${progressBar(category.share)}</code>`,
     );
-    lines.push(`<code>${bar}</code>`);
   }
 
   if (summary.byCategory.length > top.length) {
-    lines.push(`…и ещё ${summary.byCategory.length - top.length} категорий — в панели`);
+    const rest = summary.byCategory.slice(top.length);
+    const restTotal = rest.reduce((sum, c) => sum + c.total, 0);
+    lines.push(`• и ещё ${rest.length} ${plural(rest.length, 'категория', 'категории', 'категорий')} — ${money(restTotal)}`);
+  }
+
+  if (period !== 'today') {
+    const busiest = summary.days.reduce((best, day) => (day.total > (best?.total || 0) ? day : best), null);
+    if (busiest && busiest.total > 0) {
+      lines.push('', `🔺 Самый дорогой день — ${formatDayHuman(busiest.day, user.tz_offset)}, ${money(busiest.total)}`);
+    }
   }
 
   return lines.join('\n');
+}
+
+/** Полоска прогресса из блоков: доля 0…1 → «▰▰▰▰▱▱▱▱▱▱». */
+function progressBar(share, width = 10) {
+  const filled = Math.max(1, Math.min(width, Math.round(share * width)));
+  return `${'▰'.repeat(filled)}${'▱'.repeat(width - filled)}`;
 }
 
 function panelInlineKeyboard() {
@@ -368,33 +399,39 @@ function panelInlineKeyboard() {
 
 async function sendPanelLink(user, chatId) {
   const { url } = issueLoginLink(user.id);
+  const month = buildSummary(user, periodRange('month', user.tz_offset));
   return sendMessage(
     chatId,
     [
       '📊 <b>Ваша панель</b>',
       '',
-      'Ссылка одноразовая и живёт 15 минут — вход без пароля и регистрации.',
+      `В этом месяце: <b>${escapeHtml(formatMoney(month.total, user.currency))}</b> · ${month.count} ${plural(month.count, 'трата', 'траты', 'трат')}`,
+      'Внутри — кольцо по категориям, столбики по дням и правка любой траты.',
+      '',
+      '<i>Ссылка одноразовая и живёт 15 минут: ни регистрации, ни пароля.</i>',
     ].join('\n'),
-    {
-      reply_markup: {
-        inline_keyboard: [[{ text: 'Открыть панель', url }]],
-      },
-    },
+    { reply_markup: { inline_keyboard: [[{ text: '📊 Открыть панель', url }]] } },
   );
 }
 
 async function sendSettings(user, chatId) {
   const limits = limitsStatus(user);
+  const offset = user.tz_offset;
   const lines = [
     '⚙️ <b>Настройки</b>',
     '',
-    `Валюта: <b>${user.currency}</b> — сменить: <code>/currency USD</code>`,
-    `Часовой пояс: <b>UTC${user.tz_offset >= 0 ? '+' : ''}${user.tz_offset / 60}</b> — сменить: <code>/tz +5</code>`,
-    `Лимиты: ${limits.length ? `${limits.length} шт., см. /limits` : 'не заданы — <code>/limit кафе 500000</code>'}`,
+    `💱 Валюта итогов: <b>${user.currency}</b>`,
+    '<i>сменить: <code>/currency USD</code></i>',
+    '',
+    `🕒 Часовой пояс: <b>UTC${offset >= 0 ? '+' : ''}${offset / 60}</b>`,
+    '<i>сменить: <code>/tz +5</code></i>',
+    '',
+    `🎯 Лимиты: <b>${limits.length ? `${limits.length} ${plural(limits.length, 'категория', 'категории', 'категорий')}` : 'не заданы'}</b>`,
+    limits.length ? '<i>посмотреть: /limits</i>' : '<i>задать: <code>/limit кафе 500000</code></i>',
     '',
     ocrAvailable()
-      ? '📷 Можно прислать фото чека — сумму распознаю сам.'
-      : '📷 Распознавание чеков выключено (не задан ANTHROPIC_API_KEY).',
+      ? '📷 Распознавание чеков по фото: <b>включено</b>'
+      : '📷 Распознавание чеков: выключено',
   ];
   return sendMessage(chatId, lines.join('\n'));
 }
@@ -455,19 +492,30 @@ async function sendLimits(user, chatId) {
   if (limits.length === 0) {
     return sendMessage(
       chatId,
-      'Лимитов пока нет.\nЗадайте так: <code>/limit кафе 500000</code> — предупрежу, когда потратите 80%.',
+      [
+        '🎯 <b>Лимиты по категориям</b>',
+        '',
+        'Пока не заданы. Поставьте так:',
+        '<code>/limit кафе 500000</code>',
+        '',
+        'Предупрежу, когда потратите 80% и когда лимит будет превышен.',
+      ].join('\n'),
     );
   }
+  const money = (value) => escapeHtml(formatMoney(value, user.currency));
   const lines = ['🎯 <b>Лимиты на этот месяц</b>', ''];
   for (const limit of limits) {
-    const filled = Math.min(10, Math.round(limit.share * 10));
-    const bar = `${'▇'.repeat(filled)}${'▁'.repeat(10 - filled)}`;
+    const percent = Math.round(limit.share * 100);
+    const status = limit.share >= 1 ? '🚨' : limit.share >= 0.8 ? '⚠️' : '✅';
+    const left = limit.limit - limit.spent;
     lines.push(
-      `${limit.emoji} ${escapeHtml(limit.title)} — ${escapeHtml(formatMoney(limit.spent, user.currency))} из ${escapeHtml(formatMoney(limit.limit, user.currency))} (${Math.round(limit.share * 100)}%)`,
+      `${status} ${limit.emoji} ${escapeHtml(limit.title)} — ${percent}%`,
+      `<code>${progressBar(limit.share)}</code> ${money(limit.spent)} из ${money(limit.limit)}`,
+      left >= 0 ? `<i>осталось ${money(left)}</i>` : `<i>перерасход ${money(-left)}</i>`,
+      '',
     );
-    lines.push(`<code>${bar}</code>`);
   }
-  return sendMessage(chatId, lines.join('\n'));
+  return sendMessage(chatId, lines.join('\n').trim());
 }
 
 async function sendExport(user, chatId) {
@@ -594,36 +642,37 @@ async function handleCallback(query) {
 
 async function sendStart(user, chatId) {
   const lines = [
-    `Привет, ${escapeHtml(user.first_name || 'друг')}! Я — <b>Копейка</b>, трекер расходов.`,
+    `🪙 <b>Копейка</b> — трекер расходов, ${escapeHtml(user.first_name || 'привет')}!`,
     '',
-    'Просто напишите трату одним сообщением:',
-    '• <b>кофе 350</b>',
-    '• <b>такси 900 работа</b>',
-    '• <b>обед 12$</b> — в любой валюте',
-    '• <b>вчера продукты 120000</b> — задним числом',
+    'Напишите трату <b>одним сообщением</b> — я сам разберу сумму и категорию:',
+    '<blockquote>кофе 350\nтакси 900 работа\nобед 12$\nвчера продукты 120000\nпродукты 12к</blockquote>',
+    'Ошибусь с категорией — поправите кнопкой под сообщением.',
     '',
-    'Категорию подберу сам, поправить можно кнопкой под сообщением.',
-    '',
-    'Итоги: /today · /week · /month',
-    'Панель с графиками: /app',
-  ];
+    '📅 Итоги: /today · /week · /month',
+    '📊 Графики и правки: /app',
+    ocrAvailable() ? '📷 Пришлите фото чека — распознаю сумму сам' : null,
+  ].filter((line) => line !== null);
   await sendMessage(chatId, lines.join('\n'), { reply_markup: QUICK_KEYBOARD });
 }
 
 async function sendHelp(user, chatId) {
   const lines = [
-    '<b>Как пользоваться</b>',
+    '💡 <b>Как пользоваться</b>',
     '',
-    '<b>Записать трату</b> — одно сообщение: <code>кофе 350</code>, <code>такси 900 транспорт</code>, <code>обед 12$</code>.',
-    'Понимаю <code>12к</code> = 12 000 и <code>вчера</code> / <code>позавчера</code>.',
-    ocrAvailable() ? 'Можно прислать <b>фото чека</b> — распознаю сумму.' : null,
+    '<b>Записать трату</b> — одно сообщение:',
+    '<blockquote>кофе 350 — сумма и описание\n'
+      + 'такси 900 транспорт — категория словом\n'
+      + 'обед 12$ — любая валюта\n'
+      + 'продукты 12к — 12 000\n'
+      + 'вчера аптека 45000 — задним числом</blockquote>',
+    ocrAvailable() ? '📷 Фото чека — распознаю сумму сам.' : null,
     '',
-    '<b>Итоги</b>: /today, /week, /month',
-    '<b>Исправить или удалить</b>: кнопки под тратой, /last, /undo, <code>/del 12</code>',
-    '<b>Панель с графиками</b>: /app',
-    '<b>Лимиты</b>: <code>/limit кафе 500000</code>, /limits',
-    '<b>Экспорт</b>: /export — CSV для Excel и Google Sheets',
-    '<b>Настройки</b>: <code>/currency USD</code>, <code>/tz +5</code>, /settings',
+    '📅 <b>Итоги</b> — /today · /week · /month',
+    '✏️ <b>Исправить</b> — кнопки под тратой, /last, /undo, <code>/del 12</code>',
+    '📊 <b>Панель с графиками</b> — /app',
+    '🎯 <b>Лимиты</b> — <code>/limit кафе 500000</code>, /limits',
+    '📄 <b>Экспорт</b> — /export (Excel, Google Sheets)',
+    '⚙️ <b>Настройки</b> — <code>/currency USD</code>, <code>/tz +5</code>, /settings',
   ].filter((line) => line !== null);
   await sendMessage(chatId, lines.join('\n'), { reply_markup: QUICK_KEYBOARD });
 }
