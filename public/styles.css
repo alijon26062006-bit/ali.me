@@ -77,6 +77,42 @@
   }
 }
 
+
+/* Явно выбранная светлая тема (Telegram передаёт её в Mini App). */
+:root[data-theme='light'] {
+    color-scheme: light;
+    --bg: #f5f7fa;
+    --bg-glow: radial-gradient(1000px 500px at 50% -12%, #e3f5ec 0%, transparent 70%);
+    --surface: #ffffff;
+    --surface-2: #f2f4f8;
+    --surface-3: #e8ebf1;
+    --line: rgba(15, 23, 42, 0.08);
+    --line-strong: rgba(15, 23, 42, 0.14);
+
+    --text: #0f1720;
+    --text-2: #55606f;
+    --text-3: #8b95a3;
+
+    --accent: #10a86f;
+    --accent-ink: #ffffff;
+    --accent-soft: rgba(16, 168, 111, 0.12);
+    --shadow: 0 16px 34px -26px rgba(15, 23, 42, 0.5);
+
+    --cat-groceries: #1baf7a;
+    --cat-cafe: #eb6834;
+    --cat-transport: #2a78d6;
+    --cat-home: #4a3aa7;
+    --cat-connection: #008300;
+    --cat-health: #e87ba4;
+    --cat-sport: #0e9bb0;
+    --cat-shopping: #eda100;
+    --cat-fun: #e34948;
+    --cat-education: #8a8f1e;
+    --cat-gifts: #9b4fd1;
+    --cat-pets: #96601f;
+    --cat-other: #7a8290;
+}
+
 * { box-sizing: border-box; }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -670,6 +706,20 @@ button.primary:disabled { opacity: 0.55; cursor: default; }
 }
 
 .login .note { color: var(--text-3); font-size: 12.5px; margin-top: 16px; }
+
+.loader { height: 4px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin: 4px 0 6px; }
+.loader i {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 3px;
+  background: var(--accent);
+  animation: slide 1.1s ease-in-out infinite;
+}
+@keyframes slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
 
 .features { display: grid; gap: 10px; grid-template-columns: repeat(2, 1fr); margin-top: 18px; }
 .feature {

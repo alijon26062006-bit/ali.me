@@ -13,7 +13,14 @@
 </head>
 <body>
   <main class="login">
-    <div class="login-card">
+    <div class="login-card" id="loading" hidden>
+      <div class="login-logo">🪙</div>
+      <h1>Копейка</h1>
+      <p class="lead">Входим через Telegram…</p>
+      <div class="loader"><i></i></div>
+    </div>
+
+    <div class="login-card" id="landing">
       <div class="login-logo">🪙</div>
       <h1>Копейка</h1>
       <p class="lead">Трекер расходов, который живёт в Telegram.<br>Одно сообщение — и трата записана.</p>
@@ -44,18 +51,26 @@
   </main>
 
   <script>
-    // Внутри Telegram логинимся сразу, без ссылок.
+    // Внутри Telegram логинимся сразу, без ссылок и без промежуточных экранов.
     const tg = window.Telegram?.WebApp;
     if (tg?.initData) {
       tg.ready();
       tg.expand();
+      document.documentElement.dataset.theme = tg.colorScheme === 'light' ? 'light' : 'dark';
+      document.getElementById('landing').hidden = true;
+      document.getElementById('loading').hidden = false;
       fetch('/api/auth/webapp', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ initData: tg.initData }),
       }).then((response) => {
-        if (response.ok) location.replace('/');
-        else document.getElementById('status').textContent =
+        if (response.ok) {
+          location.replace('/');
+          return;
+        }
+        document.getElementById('loading').hidden = true;
+        document.getElementById('landing').hidden = false;
+        document.getElementById('status').textContent =
           'Не удалось войти через Telegram — откройте панель командой /app в боте.';
       });
     }

@@ -493,19 +493,28 @@ function panelInlineKeyboard() {
 /* --------------------------- панель, настройки, CSV ------------------------ */
 
 async function sendPanelLink(user, chatId) {
-  const { url } = issueLoginLink(user.id);
   const month = buildSummary(user, periodRange('month', user.tz_offset));
+  const { url } = issueLoginLink(user.id);
+  const miniApp = config.publicUrl.startsWith('https://');
+
+  // Внутри Telegram панель открывается как Mini App, ссылка остаётся запасным путём.
+  const rows = [];
+  if (miniApp) rows.push([{ text: '📊 Открыть панель', web_app: { url: config.publicUrl } }]);
+  rows.push([{ text: miniApp ? '🌐 Открыть в браузере' : '📊 Открыть панель', url }]);
+
   return sendMessage(
     chatId,
     [
       '📊 <b>Ваша панель</b>',
       '',
       `В этом месяце: <b>${escapeHtml(formatMoney(month.total, user.currency))}</b> · ${month.count} ${plural(month.count, 'трата', 'траты', 'трат')}`,
-      'Внутри — кольцо по категориям, столбики по дням и правка любой траты.',
+      'Кольцо по категориям, столбики по дням и правка любой траты.',
       '',
-      '<i>Ссылка одноразовая и живёт 15 минут: ни регистрации, ни пароля.</i>',
+      miniApp
+        ? '<i>Откроется прямо здесь, в Telegram — ни браузера, ни пароля.</i>'
+        : '<i>Ссылка одноразовая и живёт 15 минут: ни регистрации, ни пароля.</i>',
     ].join('\n'),
-    { reply_markup: { inline_keyboard: [[{ text: '📊 Открыть панель', url }]] } },
+    { reply_markup: { inline_keyboard: rows } },
   );
 }
 

@@ -37,10 +37,52 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const tg = window.Telegram?.WebApp;
-if (tg?.initData) {
+
+/** Внутри Telegram панель — это Mini App: тема, шапка и кнопки как у родного экрана. */
+const inMiniApp = Boolean(tg?.initData);
+
+function setupMiniApp() {
+  if (!tg) return;
   tg.ready();
   tg.expand();
+
+  const applyTheme = () => {
+    document.documentElement.dataset.theme = tg.colorScheme === 'light' ? 'light' : 'dark';
+    const params = tg.themeParams || {};
+    const root = document.documentElement.style;
+    // Берём у Telegram фон и цвет текста, акцент оставляем свой — фирменный.
+    if (params.secondary_bg_color) root.setProperty('--bg', params.secondary_bg_color);
+    if (params.bg_color) root.setProperty('--surface', params.bg_color);
+    if (params.section_bg_color) root.setProperty('--surface-2', params.section_bg_color);
+    if (params.text_color) root.setProperty('--text', params.text_color);
+    if (params.hint_color) {
+      root.setProperty('--text-2', params.hint_color);
+      root.setProperty('--text-3', params.hint_color);
+    }
+    root.setProperty('--bg-glow', 'none');
+    try {
+      tg.setHeaderColor?.(params.secondary_bg_color || 'secondary_bg_color');
+      tg.setBackgroundColor?.(params.secondary_bg_color || 'secondary_bg_color');
+    } catch {
+      /* старые версии Telegram — не критично */
+    }
+  };
+
+  applyTheme();
+  tg.onEvent?.('themeChanged', applyTheme);
+  tg.disableVerticalSwipes?.();
 }
+
+if (inMiniApp) setupMiniApp();
+
+const haptic = (type = 'light') => {
+  try {
+    if (type === 'success' || type === 'error') tg?.HapticFeedback?.notificationOccurred?.(type);
+    else tg?.HapticFeedback?.impactOccurred?.(type);
+  } catch {
+    /* без вибрации тоже нормально */
+  }
+};
 
 /* ------------------------------- сеть ---------------------------------- */
 
@@ -482,10 +524,12 @@ function renderList() {
     element.addEventListener('click', () => {
       const id = Number(element.dataset.expense);
       state.openId = state.openId === id ? null : id;
+      haptic('light');
       renderList();
     });
   });
   bindEditor();
+  syncBackButton();
 }
 
 function renderExpense(expense) {
@@ -532,20 +576,35 @@ function renderEditor(expense) {
   </div>`;
 }
 
+/** Пока открыт редактор, системная кнопка «Назад» в Telegram закрывает его. */
+function syncBackButton() {
+  if (!inMiniApp || !tg.BackButton) return;
+  if (state.openId) {
+    tg.BackButton.show();
+    tg.BackButton.onClick(closeEditor);
+  } else {
+    tg.BackButton.hide();
+    tg.BackButton.offClick?.(closeEditor);
+  }
+}
+
+function closeEditor() {
+  state.openId = null;
+  renderList();
+}
+
 function bindEditor() {
   const editor = document.querySelector('[data-editor]');
   if (!editor) return;
   const id = Number(editor.dataset.editor);
   editor.addEventListener('click', (event) => event.stopPropagation());
 
-  $('edit-cancel').addEventListener('click', () => {
-    state.openId = null;
-    renderList();
-  });
+  $('edit-cancel').addEventListener('click', closeEditor);
 
   $('edit-delete').addEventListener('click', async () => {
     await api(`/expenses/${id}`, { method: 'DELETE' });
     state.openId = null;
+    haptic('success');
     toast('Трата удалена');
     await load();
   });
@@ -565,6 +624,7 @@ function bindEditor() {
       },
     });
     state.openId = null;
+    haptic('success');
     toast('Сохранено');
     await load();
   });
@@ -590,7 +650,6 @@ function toast(message) {
   element.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => element.classList.remove('show'), 2400);
-  tg?.HapticFeedback?.impactOccurred?.('light');
 }
 
 /* ------------------------------- запуск --------------------------------- */
@@ -624,7 +683,12 @@ async function boot() {
     $('greeting').textContent = `Привет, ${state.me.user.firstName}`;
   }
 
-  if (state.me.botUsername) {
+  if (inMiniApp) {
+    $('bot-link').hidden = true;
+    const logout = $('logout');
+    logout.textContent = 'Закрыть панель';
+    logout.dataset.close = '1';
+  } else if (state.me.botUsername) {
     $('bot-link').href = `https://t.me/${state.me.botUsername}`;
   } else {
     $('bot-link').hidden = true;
@@ -653,9 +717,11 @@ async function boot() {
     try {
       const { expense } = await api('/expenses', { method: 'POST', body: { text } });
       input.value = '';
+      haptic('success');
       toast(`Записал: ${money(expense.amount, expense.currency)} · ${expense.categoryEmoji} ${expense.categoryTitle}`);
       await load();
     } catch (error) {
+      haptic('error');
       toast(error.message === 'no amount' ? 'Не нашёл сумму. Например: кофе 350' : error.message);
     } finally {
       button.disabled = false;
@@ -677,7 +743,8 @@ async function boot() {
     await load();
   });
 
-  $('logout').addEventListener('click', async () => {
+  $('logout').addEventListener('click', async (event) => {
+    if (event.currentTarget.dataset.close) return tg.close();
     await api('/auth/logout', { method: 'POST' });
     location.replace('/');
   });
