@@ -43,10 +43,22 @@ const COUNTRIES = [
 
 const countryByKey = (key) => COUNTRIES.find((country) => country.key === key);
 
+const BUTTONS = {
+  today: '📅 Сегодня',
+  week: '🗓 Неделя',
+  month: '📆 Месяц',
+  panel: '📊 Панель',
+  last: '🧾 Последние',
+  limits: '🎯 Лимиты',
+  settings: '⚙️ Настройки',
+};
+
+/** Нижнее меню: всё нужное — кнопками. Команды остаются для тех, кто их любит. */
 const QUICK_KEYBOARD = {
   keyboard: [
-    [{ text: '📅 Сегодня' }, { text: '🗓 Неделя' }, { text: '📆 Месяц' }],
-    [{ text: '🧾 Последние' }, panelButton()],
+    [{ text: BUTTONS.today }, { text: BUTTONS.week }, { text: BUTTONS.month }],
+    [panelButton(), { text: BUTTONS.last }],
+    [{ text: BUTTONS.limits }, { text: BUTTONS.settings }],
   ],
   resize_keyboard: true,
   is_persistent: true,
@@ -55,9 +67,9 @@ const QUICK_KEYBOARD = {
 function panelButton() {
   // В Telegram панель открывается как Mini App — вход без пароля.
   if (config.publicUrl.startsWith('https://')) {
-    return { text: '📊 Панель', web_app: { url: config.publicUrl } };
+    return { text: BUTTONS.panel, web_app: { url: config.publicUrl } };
   }
-  return { text: '📊 Панель' };
+  return { text: BUTTONS.panel };
 }
 
 export async function handleUpdate(update) {
@@ -78,16 +90,20 @@ async function handleMessage(message) {
   if (text.startsWith('/')) return handleCommand(user, chat.id, text);
 
   switch (text) {
-    case '📅 Сегодня':
+    case BUTTONS.today:
       return sendPeriod(user, chat.id, 'today');
-    case '🗓 Неделя':
+    case BUTTONS.week:
       return sendPeriod(user, chat.id, 'week');
-    case '📆 Месяц':
+    case BUTTONS.month:
       return sendPeriod(user, chat.id, 'month');
-    case '🧾 Последние':
+    case BUTTONS.last:
       return sendLast(user, chat.id);
-    case '📊 Панель':
+    case BUTTONS.panel:
       return sendPanelLink(user, chat.id);
+    case BUTTONS.limits:
+      return sendLimits(user, chat.id);
+    case BUTTONS.settings:
+      return sendSettings(user, chat.id);
     default:
       break;
   }
@@ -95,6 +111,7 @@ async function handleMessage(message) {
   // Незавершённый диалог правки: следующее сообщение заменяет трату.
   const pending = takePending(user.id);
   if (pending?.action === 'edit') return applyEdit(user, chat.id, pending.payload.id, text);
+  if (pending?.action === 'limit') return applyLimitAmount(user, chat.id, pending.payload.category, text);
 
   return handleExpenseText(user, chat.id, text);
 }
@@ -525,20 +542,26 @@ async function sendSettings(user, chatId) {
     '⚙️ <b>Настройки</b>',
     '',
     `💱 Валюта итогов: <b>${user.currency}</b>`,
-    '<i>сменить: <code>/currency USD</code></i>',
-    '',
     `🕒 Часовой пояс: <b>UTC${offset >= 0 ? '+' : ''}${offset / 60}</b>`,
-    '<i>сменить: <code>/tz +5</code></i>',
-    '',
     `🎯 Лимиты: <b>${limits.length ? `${limits.length} ${plural(limits.length, 'категория', 'категории', 'категорий')}` : 'не заданы'}</b>`,
-    limits.length ? '<i>посмотреть: /limits</i>' : '<i>задать: <code>/limit кафе 500000</code></i>',
+    ocrAvailable() ? '📷 Чеки по фото: <b>включено</b>' : '📷 Чеки по фото: выключено',
     '',
-    ocrAvailable()
-      ? '📷 Распознавание чеков по фото: <b>включено</b>'
-      : '📷 Распознавание чеков: выключено',
+    '<i>Всё меняется кнопками ниже.</i>',
   ];
   return sendMessage(chatId, lines.join('\n'), {
-    reply_markup: { inline_keyboard: [[{ text: '🌍 Сменить страну и валюту', callback_data: 'setup:0' }]] },
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '💱 Валюта', callback_data: 'setcur:0' },
+          { text: '🌍 Страна и время', callback_data: 'setup:0' },
+        ],
+        [
+          { text: '🎯 Лимиты', callback_data: 'limmenu:0' },
+          { text: '📄 Экспорт CSV', callback_data: 'export:0' },
+        ],
+        [{ text: '💡 Как пользоваться', callback_data: 'help:0' }],
+      ],
+    },
   });
 }
 
@@ -595,33 +618,79 @@ async function handleLimitCommand(user, chatId, args) {
 
 async function sendLimits(user, chatId) {
   const limits = limitsStatus(user);
-  if (limits.length === 0) {
-    return sendMessage(
-      chatId,
-      [
-        '🎯 <b>Лимиты по категориям</b>',
-        '',
-        'Пока не заданы. Поставьте так:',
-        '<code>/limit кафе 500000</code>',
-        '',
-        'Предупрежу, когда потратите 80% и когда лимит будет превышен.',
-      ].join('\n'),
-    );
-  }
   const money = (value) => escapeHtml(formatMoney(value, user.currency));
   const lines = ['🎯 <b>Лимиты на этот месяц</b>', ''];
-  for (const limit of limits) {
-    const percent = Math.round(limit.share * 100);
-    const status = limit.share >= 1 ? '🚨' : limit.share >= 0.8 ? '⚠️' : '✅';
-    const left = limit.limit - limit.spent;
+
+  if (limits.length === 0) {
     lines.push(
-      `${status} ${limit.emoji} ${escapeHtml(limit.title)} — ${percent}%`,
-      `<code>${progressBar(limit.share)}</code> ${money(limit.spent)} из ${money(limit.limit)}`,
-      left >= 0 ? `<i>осталось ${money(left)}</i>` : `<i>перерасход ${money(-left)}</i>`,
-      '',
+      'Пока не заданы.',
+      'Выберите категорию кнопкой ниже — предупрежу на 80% и при превышении.',
     );
+  } else {
+    for (const limit of limits) {
+      const percent = Math.round(limit.share * 100);
+      const status = limit.share >= 1 ? '🚨' : limit.share >= 0.8 ? '⚠️' : '✅';
+      const left = limit.limit - limit.spent;
+      lines.push(
+        `${status} ${limit.emoji} ${escapeHtml(limit.title)} — ${percent}%`,
+        `<code>${progressBar(limit.share)}</code> ${money(limit.spent)} из ${money(limit.limit)}`,
+        left >= 0 ? `<i>осталось ${money(left)}</i>` : `<i>перерасход ${money(-left)}</i>`,
+        '',
+      );
+    }
   }
-  return sendMessage(chatId, lines.join('\n').trim());
+
+  return sendMessage(chatId, lines.join('\n').trim(), {
+    reply_markup: { inline_keyboard: limitsKeyboard(user) },
+  });
+}
+
+/** Кнопки для лимитов: задать новый и снять существующие. */
+function limitsKeyboard(user) {
+  const current = new Map(limitsStatus(user).map((limit) => [limit.key, limit]));
+  const rows = [[{ text: '➕ Поставить лимит', callback_data: 'limmenu:0' }]];
+  for (const limit of current.values()) {
+    rows.push([
+      { text: `✏️ ${limit.emoji} ${limit.title}`, callback_data: `limset:${limit.key}` },
+      { text: '🗑', callback_data: `limdel:${limit.key}` },
+    ]);
+  }
+  return rows;
+}
+
+/** Выбор категории, для которой ставим лимит. */
+function limitCategoriesKeyboard() {
+  const buttons = CATEGORIES.filter((category) => category.key !== 'other').map((category) => ({
+    text: `${category.emoji} ${category.title}`,
+    callback_data: `limset:${category.key}`,
+  }));
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
+  return rows;
+}
+
+/** Пользователь прислал сумму лимита в ответ на вопрос. */
+async function applyLimitAmount(user, chatId, categoryKey, text) {
+  const category = getCategory(categoryKey);
+  const parsed = parseExpense(text, { defaultCurrency: user.currency });
+  const amount = parsed
+    ? parsed.amount
+    : Number(String(text).replace(/[^\d.,]/g, '').replace(',', '.'));
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    setPending(user.id, 'limit', { category: categoryKey });
+    return sendMessage(chatId, 'Не понял сумму. Пришлите число, например <b>500000</b>.');
+  }
+
+  setLimit(user.id, category.key, amount);
+  await sendMessage(
+    chatId,
+    [
+      `🎯 Лимит по «${category.emoji} ${escapeHtml(category.title)}»: <b>${escapeHtml(formatMoney(amount, user.currency))}</b> в месяц.`,
+      'Предупрежу на 80% и при превышении.',
+    ].join('\n'),
+  );
+  return sendLimits(user, chatId);
 }
 
 async function sendExport(user, chatId) {
@@ -719,11 +788,13 @@ async function handleCallback(query) {
     case 'cur': {
       const code = matchCurrency(rawId);
       if (!code) return answerCallbackQuery(query.id);
+      const wasOnboarded = Boolean(user.onboarded_at);
       const updated = markOnboarded(updateUser(user.id, { currency: code }).id);
       rebaseExpenses(updated);
       await answerCallbackQuery(query.id, `Валюта: ${code}`);
       await editMessageText(chatId, messageId, `💱 Валюта итогов: <b>${code}</b>`);
-      return sendIntro(updated, chatId);
+      // Инструкцию показываем только тем, кто настраивается впервые.
+      return wasOnboarded ? sendSettings(updated, chatId) : sendIntro(updated, chatId);
     }
     case 'setup':
       await answerCallbackQuery(query.id);
@@ -731,6 +802,41 @@ async function handleCallback(query) {
     case 'last':
       await answerCallbackQuery(query.id);
       return sendLast(user, chatId);
+    case 'help':
+      await answerCallbackQuery(query.id);
+      return sendHelp(user, chatId);
+    case 'export':
+      await answerCallbackQuery(query.id, 'Готовлю файл…');
+      return sendExport(user, chatId);
+    case 'setcur':
+      await answerCallbackQuery(query.id);
+      return sendMessage(chatId, '💱 В какой валюте считать итоги?', {
+        reply_markup: currencyKeyboard({ currency: user.currency }),
+      });
+    case 'limmenu':
+      await answerCallbackQuery(query.id);
+      return sendMessage(chatId, '🎯 Для какой категории поставить месячный лимит?', {
+        reply_markup: { inline_keyboard: limitCategoriesKeyboard() },
+      });
+    case 'limset': {
+      const category = getCategory(rawId);
+      setPending(user.id, 'limit', { category: category.key });
+      await answerCallbackQuery(query.id);
+      return sendMessage(
+        chatId,
+        [
+          `🎯 Лимит по «${category.emoji} ${escapeHtml(category.title)}» на месяц.`,
+          `Пришлите сумму в ${user.currency}, например <b>500000</b>.`,
+          '/cancel — отмена.',
+        ].join('\n'),
+      );
+    }
+    case 'limdel': {
+      const category = getCategory(rawId);
+      setLimit(user.id, category.key, 0);
+      await answerCallbackQuery(query.id, 'Лимит снят');
+      return sendLimits(user, chatId);
+    }
     case 'delb': {
       const removed = deleteExpenseRange(user.id, Number(rawId), Number(extra));
       await answerCallbackQuery(query.id, removed ? 'Удалено' : 'Уже удалено');

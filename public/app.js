@@ -35,6 +35,23 @@ const state = {
   shownTotal: 0,
 };
 
+/**
+ * Роли кнопок и их цвета. Цвет выбирается по смыслу действия, а не на глаз:
+ *   primary — главное действие (записать, сохранить)
+ *   danger  — необратимое (удалить)
+ *   warning — требует внимания (лимит на исходе)
+ *   neutral — второстепенное (отмена, выбор)
+ *   ghost   — служебное (сброс фильтра, закрыть)
+ */
+export const BUTTON_ROLES = ['primary', 'danger', 'warning', 'neutral', 'ghost'];
+
+/** Собирает кнопку с цветом, соответствующим её роли. */
+function button({ role = 'neutral', id, text, size, type = 'button', attrs = '' }) {
+  const styled = BUTTON_ROLES.includes(role) ? role : 'neutral';
+  return `<button class="btn" data-role="${styled}"${size ? ` data-size="${size}"` : ''}` +
+    `${id ? ` id="${id}"` : ''} type="${type}" ${attrs}>${text}</button>`;
+}
+
 const $ = (id) => document.getElementById(id);
 const tg = window.Telegram?.WebApp;
 
@@ -490,7 +507,7 @@ function renderList() {
   }
   if (state.dayFilter) note.push(dayTitle(state.dayFilter));
   $('filter-note').innerHTML = note.length
-    ? `${escapeHtml(note.join(' · '))} <button class="icon-btn" id="clear-filter" style="height:24px;padding:0 8px;font-size:12px">сбросить</button>`
+    ? `${escapeHtml(note.join(' · '))} ${button({ role: 'ghost', id: 'clear-filter', text: 'сбросить', attrs: 'style="padding:2px 8px;font-size:12px"' })}`
     : `${items.length} ${plural(items.length, 'запись', 'записи', 'записей')}`;
   $('clear-filter')?.addEventListener('click', () => {
     state.categoryFilter = null;
@@ -568,10 +585,10 @@ function renderEditor(expense) {
       <input type="date" id="edit-date" value="${expense.day}" aria-label="Дата" style="max-width:168px">
     </div>
     <div class="actions">
-      <button class="btn danger" id="edit-delete" type="button">Удалить</button>
+      ${button({ role: 'danger', id: 'edit-delete', text: 'Удалить' })}
       <span style="flex:1"></span>
-      <button class="btn" id="edit-cancel" type="button">Отмена</button>
-      <button class="btn save" id="edit-save" type="button">Сохранить</button>
+      ${button({ role: 'neutral', id: 'edit-cancel', text: 'Отмена' })}
+      ${button({ role: 'primary', id: 'edit-save', text: 'Сохранить' })}
     </div>
   </div>`;
 }
@@ -710,10 +727,10 @@ async function boot() {
   $('quick-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const input = $('quick-input');
-    const button = event.currentTarget.querySelector('button');
+    const submit = event.currentTarget.querySelector('button');
     const text = input.value.trim();
     if (!text) return;
-    button.disabled = true;
+    submit.disabled = true;
     try {
       const { expense } = await api('/expenses', { method: 'POST', body: { text } });
       input.value = '';
@@ -724,7 +741,7 @@ async function boot() {
       haptic('error');
       toast(error.message === 'no amount' ? 'Не нашёл сумму. Например: кофе 350' : error.message);
     } finally {
-      button.disabled = false;
+      submit.disabled = false;
     }
   });
 
