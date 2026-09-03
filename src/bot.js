@@ -14,6 +14,7 @@ import {
   addExpense, editExpense, buildSummary, limitsStatus, limitWarning, rebaseExpenses, toCsv,
 } from './service.js';
 import { issueLoginLink } from './auth.js';
+import { cbButton, urlButton, appButton } from './buttons.js';
 import { readReceipt, ocrAvailable } from './ocr.js';
 import { understandExpenses, smartParseAvailable } from './smart.js';
 
@@ -71,6 +72,8 @@ function panelButton() {
   }
   return { text: BUTTONS.panel };
 }
+
+/* Цвета кнопок задаёт роль действия — см. src/buttons.js. */
 
 export async function handleUpdate(update) {
   if (update.update_id !== undefined && !markUpdateProcessed(update.update_id)) return;
@@ -229,8 +232,8 @@ async function handleExpenseText(user, chatId, text) {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '🧾 Список', callback_data: 'last:0' },
-          { text: '🗑 Удалить всё', callback_data: `delb:${created[0].id}:${created[created.length - 1].id}` },
+          cbButton('🧾 Список', 'last:0', 'action'),
+          cbButton('🗑 Удалить всё', `delb:${created[0].id}:${created[created.length - 1].id}`, 'destroy'),
         ],
       ],
     },
@@ -319,22 +322,19 @@ function expenseKeyboard(id) {
   return {
     inline_keyboard: [
       [
-        { text: '🗂 Категория', callback_data: `cats:${id}` },
-        { text: '✏️ Исправить', callback_data: `edit:${id}` },
-        { text: '🗑 Удалить', callback_data: `del:${id}` },
+        cbButton('🗂 Категория', `cats:${id}`, 'action'),
+        cbButton('✏️ Исправить', `edit:${id}`, 'plain'),
+        cbButton('🗑 Удалить', `del:${id}`, 'destroy'),
       ],
     ],
   };
 }
 
 function categoriesKeyboard(id) {
-  const buttons = CATEGORIES.map((c) => ({
-    text: `${c.emoji} ${c.title}`,
-    callback_data: `setcat:${id}:${c.key}`,
-  }));
+  const buttons = CATEGORIES.map((c) => cbButton(`${c.emoji} ${c.title}`, `setcat:${id}:${c.key}`, 'plain'));
   const rows = [];
   for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
-  rows.push([{ text: '‹ Назад', callback_data: `back:${id}` }]);
+  rows.push([cbButton('‹ Назад', `back:${id}`, 'action')]);
   return { inline_keyboard: rows };
 }
 
@@ -426,9 +426,9 @@ async function sendLast(user, chatId) {
       `${index + 1}. ${category.emoji} <b>${escapeHtml(formatMoney(row.amount, row.currency))}</b> — ${escapeHtml(row.note)}`,
     );
     keyboard.push([
-      { text: `✏️ ${index + 1}`, callback_data: `edit:${row.id}` },
-      { text: `🗂 ${index + 1}`, callback_data: `cats:${row.id}` },
-      { text: `🗑 ${index + 1}`, callback_data: `del:${row.id}` },
+      cbButton(`✏️ ${index + 1}`, `edit:${row.id}`, 'action'),
+      cbButton(`🗂 ${index + 1}`, `cats:${row.id}`, 'plain'),
+      cbButton(`🗑 ${index + 1}`, `del:${row.id}`, 'destroy'),
     ]);
   });
 
@@ -502,7 +502,7 @@ function progressBar(share, width = 10) {
 
 function panelInlineKeyboard() {
   if (config.publicUrl.startsWith('https://')) {
-    return { inline_keyboard: [[{ text: '📊 Открыть панель', web_app: { url: config.publicUrl } }]] };
+    return { inline_keyboard: [[appButton('📊 Открыть панель', config.publicUrl, 'action')]] };
   }
   return undefined;
 }
@@ -516,8 +516,8 @@ async function sendPanelLink(user, chatId) {
 
   // Внутри Telegram панель открывается как Mini App, ссылка остаётся запасным путём.
   const rows = [];
-  if (miniApp) rows.push([{ text: '📊 Открыть панель', web_app: { url: config.publicUrl } }]);
-  rows.push([{ text: miniApp ? '🌐 Открыть в браузере' : '📊 Открыть панель', url }]);
+  if (miniApp) rows.push([appButton('📊 Открыть панель', config.publicUrl, 'action')]);
+  rows.push([urlButton(miniApp ? '🌐 Открыть в браузере' : '📊 Открыть панель', url, miniApp ? 'plain' : 'action')]);
 
   return sendMessage(
     chatId,
@@ -552,14 +552,14 @@ async function sendSettings(user, chatId) {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '💱 Валюта', callback_data: 'setcur:0' },
-          { text: '🌍 Страна и время', callback_data: 'setup:0' },
+          cbButton('💱 Валюта', 'setcur:0', 'action'),
+          cbButton('🌍 Страна и время', 'setup:0', 'action'),
         ],
         [
-          { text: '🎯 Лимиты', callback_data: 'limmenu:0' },
-          { text: '📄 Экспорт CSV', callback_data: 'export:0' },
+          cbButton('🎯 Лимиты', 'limmenu:0', 'action'),
+          cbButton('📄 Экспорт CSV', 'export:0', 'plain'),
         ],
-        [{ text: '💡 Как пользоваться', callback_data: 'help:0' }],
+        [cbButton('💡 Как пользоваться', 'help:0', 'plain')],
       ],
     },
   });
@@ -648,11 +648,11 @@ async function sendLimits(user, chatId) {
 /** Кнопки для лимитов: задать новый и снять существующие. */
 function limitsKeyboard(user) {
   const current = new Map(limitsStatus(user).map((limit) => [limit.key, limit]));
-  const rows = [[{ text: '➕ Поставить лимит', callback_data: 'limmenu:0' }]];
+  const rows = [[cbButton('➕ Поставить лимит', 'limmenu:0', 'confirm')]];
   for (const limit of current.values()) {
     rows.push([
-      { text: `✏️ ${limit.emoji} ${limit.title}`, callback_data: `limset:${limit.key}` },
-      { text: '🗑', callback_data: `limdel:${limit.key}` },
+      cbButton(`✏️ ${limit.emoji} ${limit.title}`, `limset:${limit.key}`, 'action'),
+      cbButton('🗑', `limdel:${limit.key}`, 'destroy'),
     ]);
   }
   return rows;
@@ -660,10 +660,9 @@ function limitsKeyboard(user) {
 
 /** Выбор категории, для которой ставим лимит. */
 function limitCategoriesKeyboard() {
-  const buttons = CATEGORIES.filter((category) => category.key !== 'other').map((category) => ({
-    text: `${category.emoji} ${category.title}`,
-    callback_data: `limset:${category.key}`,
-  }));
+  const buttons = CATEGORIES.filter((category) => category.key !== 'other').map((category) =>
+    cbButton(`${category.emoji} ${category.title}`, `limset:${category.key}`, 'plain'),
+  );
   const rows = [];
   for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
   return rows;
@@ -915,10 +914,7 @@ async function sendStart(user, chatId, { force = false } = {}) {
     {
       reply_markup: {
         inline_keyboard: [
-          COUNTRIES.map((country) => ({
-            text: `${country.flag} ${country.title}`,
-            callback_data: `ctry:${country.key}`,
-          })),
+          COUNTRIES.map((country) => cbButton(`${country.flag} ${country.title}`, `ctry:${country.key}`, 'action')),
         ],
       },
     },
@@ -928,10 +924,9 @@ async function sendStart(user, chatId, { force = false } = {}) {
 /** Второй шаг онбординга: валюта, в которой считать итоги. */
 function currencyKeyboard(country) {
   const codes = [...new Set([country.currency, 'USD', 'RUB', 'KZT', 'TJS', 'UZS'])].slice(0, 6);
-  const buttons = codes.map((code) => ({
-    text: `${CURRENCY_LABEL[code] || ''} ${code}`.trim(),
-    callback_data: `cur:${code}`,
-  }));
+  const buttons = codes.map((code) =>
+    cbButton(`${CURRENCY_LABEL[code] || ''} ${code}`.trim(), `cur:${code}`, code === country.currency ? 'action' : 'plain'),
+  );
   const rows = [];
   for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
   return { inline_keyboard: rows };

@@ -186,6 +186,28 @@ test('кнопка в настройках возвращает мастер н�
   );
 });
 
+test('кнопки покрашены по роли действия', async () => {
+  await handleUpdate(message('шаурма 45'));
+  const card = [...sent].reverse().find((call) => call.method === 'sendMessage');
+  const row = card.body.reply_markup.inline_keyboard[0];
+  const styles = Object.fromEntries(row.map((button) => [button.text.slice(-8), button.style]));
+  assert.equal(row.find((button) => button.text.includes('Удалить')).style, 'danger');
+  assert.equal(row.find((button) => button.text.includes('Категория')).style, 'primary');
+  assert.equal(row.find((button) => button.text.includes('Исправить')).style, undefined);
+  assert.ok(Object.keys(styles).length === 3);
+});
+
+test('если Bot API не принял style, клавиатура уходит без цвета', async () => {
+  const { stripStyles } = await import('../src/buttons.js');
+  const stripped = stripStyles({
+    inline_keyboard: [[{ text: 'a', callback_data: 'x', style: 'danger' }, { text: 'b', callback_data: 'y' }]],
+  });
+  assert.deepEqual(stripped.inline_keyboard[0], [
+    { text: 'a', callback_data: 'x' },
+    { text: 'b', callback_data: 'y' },
+  ]);
+});
+
 test('чужие траты недоступны через колбэк другого пользователя', async () => {
   const [expense] = recentExpenses(USER.id, 1);
   const stranger = {

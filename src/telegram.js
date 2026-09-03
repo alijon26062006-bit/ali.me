@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { stripStyles } from './buttons.js';
 
 const API = (method) => `https://api.telegram.org/bot${config.botToken}/${method}`;
 
@@ -10,13 +11,21 @@ export class TelegramError extends Error {
   }
 }
 
+// Цветные кнопки появились в Bot API 9 февраля 2026. Если сервер их не принял,
+// один раз сообщаем об этом и дальше отправляем клавиатуры без стилей.
+let buttonStylesSupported = true;
+
 export async function callApi(method, params = {}) {
+  const payload = buttonStylesSupported
+    ? params
+    : { ...params, ...(params.reply_markup ? { reply_markup: stripStyles(params.reply_markup) } : {}) };
+
   let response;
   try {
     response = await fetch(API(method), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify(payload),
     });
   } catch (error) {
     // fetch прячет причину в cause — без неё в логе остаётся бесполезное «fetch failed».
@@ -27,7 +36,15 @@ export async function callApi(method, params = {}) {
   const data = await response
     .json()
     .catch(() => ({ ok: false, description: `HTTP ${response.status}, ответ не JSON`, error_code: response.status }));
-  if (!data.ok) throw new TelegramError(method, data.description, data.error_code || response.status);
+
+  if (!data.ok) {
+    if (buttonStylesSupported && params.reply_markup && /style/i.test(data.description || '')) {
+      console.warn('Bot API не принял style у кнопок — отправляю клавиатуры без цвета');
+      buttonStylesSupported = false;
+      return callApi(method, params);
+    }
+    throw new TelegramError(method, data.description, data.error_code || response.status);
+  }
   return data.result;
 }
 
