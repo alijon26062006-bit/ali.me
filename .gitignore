@@ -5,3 +5,4 @@ Thumbs.db
 uploads/
 .vscode/
 *.log
+__pycache__/
