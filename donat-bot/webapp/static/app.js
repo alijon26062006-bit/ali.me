@@ -231,7 +231,7 @@
     let theme = (S.user && S.user.theme) || "dark";
     if (theme === "auto") theme = tg && tg.colorScheme ? tg.colorScheme : (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
     document.documentElement.dataset.theme = theme;
-    const bg = theme === "light" ? "#f4f4f6" : "#0b0b0d";
+    const bg = theme === "light" ? "#f5f5fb" : "#0d0d1f";
     try { tg.setHeaderColor(bg); tg.setBackgroundColor(bg); tg.setBottomBarColor && tg.setBottomBarColor(bg); } catch { /* old client */ }
   }
 
@@ -426,14 +426,14 @@
   };
 
   const BANK_STYLE = {
-    alif: ["#fff", "#16a34a", "alif"], dc: ["#fff", "#1d4ed8", "DC"], bank: ["#3a2608", "#ff8a00", "🏦"],
-    rus: ["#fff", "#16a34a", "RU"], balance: ["#3a2208", "#ff8a00", ""],
+    alif: ["#fff", "#16a34a", "alif"], dc: ["#fff", "#1d4ed8", "DC"], bank: ["var(--tint-1)", "var(--primary)", "🏦"],
+    rus: ["#fff", "#16a34a", "RU"], balance: ["var(--tint-1)", "var(--primary)", ""],
   };
   function methodBadge(id) {
-    if (id === "balance") return `<span class="bank-logo" style="background:#2a1a08;color:var(--primary);border:1px solid #5a3a12">${icon("wallet")}</span>`;
+    if (id === "balance") return `<span class="bank-logo" style="background:var(--tint-1);color:var(--primary-text);border:1px solid var(--tint-border)">${icon("wallet")}</span>`;
     const m = S.boot.methods.find((x) => x.id === id) || {};
     const [bg, fg, label] = BANK_STYLE[m.icon] || BANK_STYLE.bank;
-    if (m.icon === "bank") return `<span class="bank-logo" style="background:#2a1a08;color:var(--primary);border:1px solid #5a3a12">${icon("card")}</span>`;
+    if (m.icon === "bank") return `<span class="bank-logo" style="background:var(--tint-1);color:var(--primary-text);border:1px solid var(--tint-border)">${icon("card")}</span>`;
     return `<span class="bank-logo" style="background:${bg};color:${fg}">${esc(label)}</span>`;
   }
   const methodTitle = (id) => id === "balance" ? `${T("fromBalance")} · ${moneyText(S.user.balance)}` : (S.boot.methods.find((m) => m.id === id) || {}).title || id;
@@ -476,7 +476,7 @@
 
   function requestSheet(res) {
     openSheet(`<div class="center" style="padding:8px 4px 4px">
-        <div style="width:72px;height:72px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary)">${icon("receipt")}</div>
+        <div style="width:72px;height:72px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary-text)">${icon("receipt")}</div>
         <h3 style="margin:0 0 6px;font-size:21px">${esc(T("requestCreated"))}</h3>
         <div class="chip" style="margin-bottom:12px">${esc(res.topup)} · ${moneyText(res.amount, { cur: "TJS" })}</div>
         <p class="muted" style="margin:0 0 20px">${esc(T("requestHint"))}</p>
@@ -519,13 +519,13 @@
     const h = S.history;
     const tabs = `<div class="seg"><button class="${S.historyTab === "orders" ? "on" : ""}" data-htab="orders">${esc(T("orders"))}</button>
       <button class="${S.historyTab === "finance" ? "on" : ""}" data-htab="finance">${esc(T("finance"))}</button></div>`;
-    if (!h) return `<h1 class="page-title">${esc(T("history"))}</h1>${tabs}<div class="empty"><span class="spin" style="display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite"></span></div>`;
+    if (!h) return `<h1 class="page-title">${esc(T("history"))}</h1>${tabs}<div class="empty"><span class="spin" style="display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary-text);border-radius:50%;animation:spin .8s linear infinite"></span></div>`;
     let body;
     if (S.historyTab === "orders") {
       const doneSum = h.orders.filter((o) => o.status === "done").reduce((s, o) => s + o.amount, 0);
       const map = { all: null, pending: ["processing", "unpaid"], done: ["done"], cancelled: ["cancelled"] };
       const list = h.orders.filter((o) => !map[S.historyFilter] || map[S.historyFilter].includes(o.status));
-      body = `<div class="stats2"><div><span class="ic" style="background:var(--primary-soft);color:var(--primary)">${icon("package")}</span>
+      body = `<div class="stats2"><div><span class="ic" style="background:var(--primary-soft);color:var(--primary-text)">${icon("package")}</span>
           <span><span class="k">${esc(T("total").toUpperCase())}</span><span class="v" style="display:block">${h.orders.length}<small>${esc(T("order"))}</small></span></span></div>
         <div><span class="ic" style="background:rgba(34,197,94,.14);color:var(--success)">${icon("receipt")}</span>
           <span><span class="k">${esc(T("spent").toUpperCase())}</span><span class="v" style="display:block">${moneyHTML(doneSum)}</span></span></div></div>
@@ -541,7 +541,7 @@
       const income = h.transactions.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0);
       body = `<div class="stats2"><div><span class="ic" style="background:rgba(34,197,94,.14);color:var(--success)">${icon("plus")}</span>
           <span><span class="k">${esc(T("topup").toUpperCase())}</span><span class="v" style="display:block">${moneyHTML(income)}</span></span></div>
-        <div><span class="ic" style="background:var(--primary-soft);color:var(--primary)">${icon("wallet")}</span>
+        <div><span class="ic" style="background:var(--primary-soft);color:var(--primary-text)">${icon("wallet")}</span>
           <span><span class="k">${esc(T("balance").toUpperCase())}</span><span class="v" style="display:block">${moneyHTML(S.user.balance)}</span></span></div></div>
         ${grouped(rows, (r) => r._k === "tx"
           ? `<div class="item"><span class="ic">${icon(r.amount > 0 ? "plus" : "cart")}</span><span class="grow"><span class="t" style="display:block">${esc(T("tx_" + r.kind))}</span>
@@ -590,7 +590,7 @@
         <div class="ok-row"><span>${esc(T("verified"))}</span><span>${esc(T("safe"))}</span></div></section>
       <div class="section-title">${esc(T("buyerLevel"))}</div>
       <div class="card"><div class="lvl-head"><div><div class="k muted" style="font-size:12px;font-weight:700;letter-spacing:.08em">${esc(T("curLevel").toUpperCase())}</div>
-        <div style="font-weight:800;font-size:18px;color:var(--primary)">${esc(lvl.title)}</div></div><div class="pct">${lvl.progress}<small>%</small></div></div>
+        <div style="font-weight:800;font-size:18px;color:var(--primary-text)">${esc(lvl.title)}</div></div><div class="pct">${lvl.progress}<small>%</small></div></div>
         <div class="progress"><i style="width:${Math.max(0, Math.min(100, lvl.progress))}%"></i></div>
         <div class="muted" style="font-size:14px">${lvl.next_title ? esc(T("toNext", { n: lvl.next_title, x: moneyText(lvl.next_left) })) : esc(T("maxLevel"))}</div></div>
       <div class="section-title">${esc(T("yourInfo"))}</div>
@@ -600,7 +600,7 @@
         <div class="card"><div class="k">${esc(T("spentAll"))}</div><div class="v">${moneyText(u.total_spent)}</div></div>
         <div class="card"><div class="k">${esc(T("since"))}</div><div class="v">${esc(since)}</div></div></div>
       <button class="ref card" data-act="referral"><span class="ic">${icon("users")}</span>
-        <span class="grow"><b style="display:block">${esc(T("partner"))}</b><span class="muted" style="font-size:14px">${T("partnerSub", { p: `<b style="color:var(--primary)">${S.boot.referral_percent}</b>` })}</span></span>
+        <span class="grow"><b style="display:block">${esc(T("partner"))}</b><span class="muted" style="font-size:14px">${T("partnerSub", { p: `<b style="color:var(--primary-text)">${S.boot.referral_percent}</b>` })}</span></span>
         <span class="go">${icon("arrow")}</span></button>
       <div class="section-title">${esc(T("settings"))}</div>
       <div class="settings">
@@ -634,7 +634,7 @@
       const { items } = await api("/notifications");
       const box = document.getElementById("notif");
       if (!box) return;
-      box.innerHTML = items.length ? grouped(items, (n) => `<div class="item" style="align-items:flex-start"><span class="ic" style="${n.is_read ? "" : "color:var(--primary);border-color:var(--primary)"}">${icon("bell")}</span>
+      box.innerHTML = items.length ? grouped(items, (n) => `<div class="item" style="align-items:flex-start"><span class="ic" style="${n.is_read ? "" : "color:var(--primary-text);border-color:var(--primary-text)"}">${icon("bell")}</span>
         <span class="grow"><span style="display:block;font-size:15px;white-space:pre-line">${esc(n.text.replace(/<[^>]+>/g, ""))}</span><span class="s">${timeOf(n.created_at)}</span></span></div>`)
         : `<div class="empty">${icon("bell")}<div>${esc(T("noNotif"))}</div></div>`;
       if (S.user.unread) { await api("/notifications/read", {}); S.user.unread = 0; }
@@ -685,7 +685,7 @@
     const el = document.createElement("div");
     el.className = "pin";
     const draw = () => {
-      el.innerHTML = `<div style="width:64px;height:64px;border-radius:20px;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary)">${icon("lock")}</div>
+      el.innerHTML = `<div style="width:64px;height:64px;border-radius:20px;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary-text)">${icon("lock")}</div>
         <div style="font-weight:800;font-size:20px">${esc(title)}</div>
         <div class="pin-dots">${[0, 1, 2, 3].map((i) => `<i class="${i < val.length ? "on" : ""}"></i>`).join("")}</div>
         <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9, "", 0, "del"].map((k) => k === "" ? "<span></span>"

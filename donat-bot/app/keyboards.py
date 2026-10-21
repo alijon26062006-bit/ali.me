@@ -21,7 +21,7 @@ def reply_menu(lang: str) -> ReplyKeyboardMarkup:
 def main_menu(lang: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardButton
     return InlineKeyboardMarkup(inline_keyboard=[
-        [b(text=f"🛒 {t(lang, 'btn_donate')}", callback_data="m:donate", style="success")],
+        [b(text=f"🛒 {t(lang, 'btn_donate')}", callback_data="m:donate", style="primary")],
         [webapp_button(f"🛍 {t(lang, 'btn_shop')}")],
         [webapp_button(f"⚙️ {t(lang, 'btn_sens')}", "#/sens")],
         [b(text=f"👤 {t(lang, 'btn_profile')}", callback_data="m:profile"),

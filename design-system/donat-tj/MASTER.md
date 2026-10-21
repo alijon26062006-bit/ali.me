@@ -18,17 +18,17 @@
 
 | Role | Hex | CSS Variable |
 |------|-----|--------------|
-| Primary | `#FF8A00` | `--color-primary` |
-| Surface | `#16171B` | `--color-surface` |
-| CTA/Accent | `#FF8A00` | `--color-cta` |
-| Background | `#0B0B0D` | `--color-background` |
-| Text | `#F5F5F7` | `--color-text` |
-| Muted text | `#9A9AA2` | `--color-muted` |
-| Border | `#26272D` | `--color-border` |
+| Primary | `#7C3AED` | `--color-primary` |
+| Surface | `#15152B` | `--color-surface` |
+| CTA/Accent | `#7C3AED` | `--color-cta` |
+| Background | `#0D0D1F` | `--color-background` |
+| Text | `#EEF0FF` | `--color-text` |
+| Muted text | `#A3A6C8` | `--color-muted` |
+| Border | `#26264A` | `--color-border` |
 | Success | `#22C55E` | `--color-success` |
-| Danger | `#EF4444` | `--color-danger` |
+| Danger | `#F43F5E` | `--color-danger` |
 
-**Color Notes:** Dark-first (matches Telegram dark theme) with orange accent, per reference screenshots. Light theme is an optional user setting.
+**Color Notes:** Dark-first neon violet (#7C3AED) with cyan (#22D3EE) secondary — Gaming palette from UI UX Pro Max; deliberately different from the orange reference bot. Text on violet uses #B69CFF (dark) / #6D28D9 (light) for 4.5:1+ contrast. Light theme is an optional user setting.
 
 ### Typography
 
@@ -73,7 +73,7 @@
 ```css
 /* Primary Button */
 .btn-primary {
-  background: #FF8A00;
+  background: #7C3AED;
   color: white;
   padding: 12px 24px;
   border-radius: 8px;
@@ -90,8 +90,8 @@
 /* Secondary Button */
 .btn-secondary {
   background: transparent;
-  color: #FF8A00;
-  border: 2px solid #FF8A00;
+  color: #7C3AED;
+  border: 2px solid #7C3AED;
   padding: 12px 24px;
   border-radius: 8px;
   font-weight: 600;
@@ -104,7 +104,7 @@
 
 ```css
 .card {
-  background: #16171B;
+  background: #15152B;
   border-radius: 12px;
   padding: 24px;
   box-shadow: var(--shadow-md);
@@ -123,16 +123,16 @@
 ```css
 .input {
   padding: 12px 16px;
-  border: 1px solid #26272D;
+  border: 1px solid #26264A;
   border-radius: 8px;
   font-size: 16px;
   transition: border-color 200ms ease;
 }
 
 .input:focus {
-  border-color: #FF8A00;
+  border-color: #7C3AED;
   outline: none;
-  box-shadow: 0 0 0 3px #FF8A0033;
+  box-shadow: 0 0 0 3px #7C3AED33;
 }
 ```
 
