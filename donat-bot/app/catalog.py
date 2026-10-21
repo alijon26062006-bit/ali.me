@@ -196,6 +196,44 @@ def _featured_key(cat_text: str, region_text: str) -> str | None:
     return None
 
 
+IMAGE_KEYS = ("image", "image_url", "img", "icon", "icon_url", "logo", "logo_url", "picture", "photo",
+              "thumbnail", "thumb", "cover", "banner", "banner_url", "preview", "avatar")
+SAFE_URL = re.compile(r"^https?://[^\s\"'<>()]+$")
+
+
+def find_image(obj: dict, origin: str = "") -> str:
+    """First picture URL in a supplier object. Relative paths get the supplier origin; only https
+    (or the supplier's own origin) is accepted so the page can't be pointed at something unsafe."""
+    for key in IMAGE_KEYS:
+        v = obj.get(key)
+        if isinstance(v, dict):  # {"url": ...} or sizes
+            v = v.get("url") or v.get("original") or v.get("large") or v.get("medium") or next(iter(v.values()), "")
+        if not isinstance(v, str) or not v.strip():
+            continue
+        v = v.strip()
+        if v.startswith("//"):
+            v = "https:" + v
+        elif v.startswith("/") and origin:
+            v = origin + v
+        if SAFE_URL.match(v) and (v.startswith("https://") or (origin and v.startswith(origin))):
+            return v
+    return ""
+
+
+def _category_images(raw: dict) -> dict[str, str]:
+    """category id / name (lower case) -> picture, from /categories and /v2/topups."""
+    origin = raw.get("image_origin", "")
+    images: dict[str, str] = {}
+    for c in raw.get("categories", []):
+        img = find_image(c, origin)
+        if not img:
+            continue
+        for key in ("category_id", "id", "slug", "code", "name", "title"):
+            if c.get(key):
+                images.setdefault(str(c[key]).lower(), img)
+    return images
+
+
 def build_supplier_catalog(raw: dict) -> list[dict]:
     """Turns Donatix /products items into the shop's categories. Prices stay in USD here and are
     converted at read time, so a new rate or markup applies immediately."""
@@ -207,6 +245,8 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
     for cid, _region in groups:
         regions_per_cat[cid] = regions_per_cat.get(cid, 0) + 1
 
+    origin = raw.get("image_origin", "")
+    cat_images = _category_images(raw)
     cats, used_featured = [], set()
     for idx, ((cid, region), items) in enumerate(sorted(groups.items(), key=lambda kv: str(kv[0]))):
         first = items[0]
@@ -226,6 +266,7 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
                 "id": it["product_id"], "sku": it["product_id"], "title": pname, "subtitle": "",
                 "tab": "levelup" if "level" in pname.lower() else "main", "art": _art(f"{name} {pname}"),
                 "price_usd": float(it.get("price_usd") or 0),
+                "image": find_image(it, origin),
                 "fields": [make_field(f.get("key", ""), f.get("label", ""), f.get("placeholder", ""))
                            for f in (it.get("fields") or [{"key": "player_id"}])],
             })
@@ -242,7 +283,9 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
         cat = {"id": fkey or f"dx_{_slug(cid)}_{_slug(region)}"[:44], "title": look.get("title", title), "group": group,
                "short": look.get("short") or _short(name), "colors": look.get("colors") or [color, "#111127"],
                "tabs": tabs, "products": products, "uid_label": products[0]["fields"][0]["label"],
-               "uid_placeholder": products[0]["fields"][0]["placeholder"]}
+               "uid_placeholder": products[0]["fields"][0]["placeholder"],
+               "image": cat_images.get(str(cid).lower()) or cat_images.get(str(name).lower())
+               or next((p["image"] for p in products if p["image"]), "")}
         if fkey:
             used_featured.add(fkey)
             cat.update(banner=look.get("banner"), banner_kicker=look.get("banner_kicker"))
@@ -271,6 +314,7 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
         if not any(p["tab"] == "main" for p in tg_products):
             tabs = tabs[1:]
         cats.append({"id": "telegram", "title": "Telegram", "group": "telegram", "short": "TG",
+                     "image": cat_images.get("telegram") or cat_images.get("telegram_stars") or "",
                      "colors": ["#229ed9", "#04121a"], "tabs": tabs, "products": tg_products,
                      "uid_label": "Username", "uid_placeholder": "@username"})
     # featured first, in the fixed order of the home screen
@@ -349,6 +393,8 @@ async def sync_supplier_catalog() -> str:
     if not supplier.enabled:
         return "Таъминкунанда пайваст нест"
     raw = {kind: await supplier.products(kind) for kind in ("topup", "telegram_stars", "telegram_premium")}
+    raw["categories"] = await supplier.categories()
+    raw["image_origin"] = supplier.origin
     cats = build_supplier_catalog(raw)
     if not cats:
         return "Таъминкунанда ягон маҳсулот надод"
@@ -357,7 +403,8 @@ async def sync_supplier_catalog() -> str:
         await db.set_setting("usd_rate_auto", str(rate))
     await db.set_setting("supplier_catalog", json.dumps(raw, ensure_ascii=False))
     set_active(cats, "supplier")
-    return f"{len(cats)} категория, {sum(len(c['products']) for c in cats)} маҳсулот"
+    with_img = sum(1 for c in cats if c.get("image"))
+    return f"{len(cats)} категория ({with_img} бо расм), {sum(len(c['products']) for c in cats)} маҳсулот"
 
 
 async def catalog_sync_loop():

@@ -99,6 +99,12 @@
         <path transform="translate(18 16) scale(3.5)" d="${"M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"}" fill="url(#stA)" stroke="#fff" stroke-opacity=".4" stroke-width=".4"/></svg>`,
   };
   const art = (p) => (ART[p.art] || ART.gem)(p);
+  // Pictures from the supplier API (games and packs); drawn artwork is the fallback when there is none
+  // or the picture fails to load.
+  const safeImg = (u) => (typeof u === "string" && /^https?:\/\/[^\s"'<>()]+$/.test(u) ? u : "");
+  const imgTag = (u, cls, fallback) => `<img class="${cls}" src="${esc(u)}" alt="" loading="lazy" decoding="async"
+      onerror="this.outerHTML=this.dataset.fb ? decodeURIComponent(this.dataset.fb) : ''" data-fb="${encodeURIComponent(fallback || "")}">`;
+  const productArt = (p) => safeImg(p.image) ? imgTag(p.image, "pimg", art(p)) : art(p);
 
   // ------------------------------------------------------------------ i18n
   const I18N = {
@@ -319,7 +325,7 @@
       <div class="section-title">${esc(T("categories"))}<small>${esc(T("choose"))}</small></div>
       ${featured.map(banner).join("")}
       ${groups.map(([g, list]) => g === "telegram" && list.length === 1
-        ? `<div class="acc"><button data-go="#/cat/${list[0].id}">${icon("send")}<span>Telegram</span>${icon("right", "chev")}</button></div>`
+        ? `<div class="acc"><button data-go="#/cat/${list[0].id}">${safeImg(list[0].image) ? `<span class="logo-sq" style="width:28px;height:28px;border-radius:8px">${imgTag(list[0].image, "", "")}</span>` : icon("send")}<span>Telegram</span>${icon("right", "chev")}</button></div>`
         : `<div class="acc" data-acc><button aria-expanded="false">${icon(groupIcon[g])}<span>${esc(groupTitle(g))} (${list.length})</span>${icon("down", "chev")}</button>
             <div class="acc-body">${list.map(gameRow).join("")}</div></div>`).join("")}
     `;
@@ -348,7 +354,9 @@
   function banner(c) {
     const [c1, c2] = c.colors;
     return `<button class="banner" data-go="#/cat/${c.id}" style="--accent:${c1}" aria-label="${esc(c.title)}">
-      <span class="bg" data-mark="${esc(c.short)}" style="background:radial-gradient(circle at 80% 30%, ${c1}aa, transparent 55%), linear-gradient(120deg, ${c2}, #0a0a0c)"></span>
+      <span class="bg ${safeImg(c.image) ? "photo" : ""}" data-mark="${safeImg(c.image) ? "" : esc(c.short)}" style="background:${safeImg(c.image)
+        ? `linear-gradient(90deg, ${c2}f2 0%, ${c2}b3 45%, transparent 85%), url('${esc(c.image)}') right center / cover no-repeat, ${c2}`
+        : `radial-gradient(circle at 80% 30%, ${c1}aa, transparent 55%), linear-gradient(120deg, ${c2}, #0a0a0c)`}"></span>
       <span class="content"><span class="kicker" style="color:${c1}">${esc(c.banner_kicker || "")}</span>
       <span class="big" style="display:block;--big:${(c.banner || c.title).length > 6 ? 30 : 40}px">${esc(c.banner || c.title)}</span>
       <span class="buy">${esc(T("buy"))}<i>${icon("arrow")}</i></span></span></button>`;
@@ -356,7 +364,8 @@
 
   function gameRow(c) {
     const [c1, c2] = c.colors;
-    return `<button class="game-row" data-go="#/cat/${c.id}"><span class="logo-sq" style="background:linear-gradient(145deg, ${c1}, ${c2})">${esc(c.short)}</span>
+    const logo = safeImg(c.image) ? imgTag(c.image, "", esc(c.short)) : esc(c.short);
+    return `<button class="game-row" data-go="#/cat/${c.id}"><span class="logo-sq" style="background:linear-gradient(145deg, ${c1}, ${c2})">${logo}</span>
       <span class="grow"><span class="ellipsis" style="display:block;font-weight:700">${esc(c.title)}</span>
       <span class="muted" style="font-size:13px">${c.products.length} ${LANG === "ru" ? "товаров" : "маҳсулот"} · ${esc(T("buy").toLowerCase())} ${moneyText(Math.min(...c.products.map((p) => p.price)))}+</span></span>${icon("right", "chev")}</button>`;
   }
@@ -388,7 +397,7 @@
     const isMain = p.art === "gem" || p.art === "coin";
     return `<div class="prod ${sel ? "sel" : ""}" data-prod="${p.id}" role="button" tabindex="0" aria-label="${esc(p.title)}">
       ${S.multi ? `<span class="check">${sel ? icon("check") : ""}</span>` : ""}
-      <div class="art">${art(p)}${!isMain ? `<button class="info-btn" data-info="${p.id}" aria-label="Info">${icon("info")}</button>` : ""}</div>
+      <div class="art">${productArt(p)}${!isMain ? `<button class="info-btn" data-info="${p.id}" aria-label="Info">${icon("info")}</button>` : ""}</div>
       <div class="title">${esc(p.title)}</div>${p.subtitle ? `<div class="sub">${esc(p.subtitle)}</div>` : ""}
       <div class="foot"><div class="price">${moneyHTML(p.price)}</div>
       <button class="cart-btn ${isMain ? "accent" : ""}" data-cart="${p.id}" aria-label="${esc(T("buy"))}">${icon("cart")}</button></div></div>`;
@@ -414,7 +423,7 @@
     const f0 = fields[0];
     if (!co.fields[f0.key] && co.uid) co.fields[f0.key] = co.uid;
     return `${topbar(T("checkout"))}
-      <div class="summary"><span class="ic">${icon(lines[0] && lines[0][0].art === "coin" ? "coins" : "gem")}</span>
+      <div class="summary"><span class="ic">${c && safeImg(c.image) ? imgTag(c.image, "", icon("gem")) : icon(lines[0] && lines[0][0].art === "coin" ? "coins" : "gem")}</span>
         <span class="grow"><span class="k">${esc(T("product").toUpperCase())}</span><span class="v" style="display:block">${esc(title)}</span></span>
         <span class="amt">${moneyHTML(total)}</span></div>
       <label class="label" for="uid">${esc(f0.label)}</label>
@@ -773,7 +782,7 @@
       e.stopPropagation();
       const [p, c] = productById(d.info);
       openSheet(`<div class="sheet-head"><h3>${esc(p.title)}</h3><button class="close-btn" data-close aria-label="Close">${icon("x")}</button></div>
-        <div class="prod" style="pointer-events:none"><div class="art" style="max-width:220px;margin:0 auto;width:100%">${art(p)}</div></div>
+        <div class="prod" style="pointer-events:none"><div class="art" style="max-width:220px;margin:0 auto;width:100%">${productArt(p)}</div></div>
         <p class="muted">${esc(p.subtitle || c.title)}</p><div class="price" style="margin-bottom:16px">${moneyHTML(p.price)}</div>
         <button class="cta" data-cart="${p.id}">${icon("cart")}${esc(T("buy"))}</button>`);
       return;

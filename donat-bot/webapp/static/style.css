@@ -205,7 +205,11 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 .game-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px; min-height: 56px; border-radius: 14px; text-align: left; transition: background .2s; }
 .game-row:hover { background: var(--surface-2); }
 .game-row .chev { margin-left: auto; color: var(--faint); }
-.logo-sq { width: 42px; height: 42px; border-radius: 12px; flex: none; display: grid; place-items: center; font-family: var(--display);
+.logo-sq img, .summary .ic img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+.summary .ic { overflow: hidden; }
+.prod .art img.pimg { width: 80%; height: 80%; object-fit: contain; }
+.banner .bg.photo::before { display: none; }
+.logo-sq { width: 42px; height: 42px; border-radius: 12px; flex: none; overflow: hidden; display: grid; place-items: center; font-family: var(--display);
            font-weight: 800; font-size: 13px; color: #fff; border: 1px solid rgba(255,255,255,.12); }
 
 /* ---------- tabs / segmented ---------- */

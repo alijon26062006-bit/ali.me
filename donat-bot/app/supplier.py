@@ -6,6 +6,7 @@ admins for manual delivery.
 """
 import asyncio
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -55,6 +56,9 @@ class ManualSupplier:
     async def usd_rate(self) -> float | None:
         return None
 
+    async def categories(self) -> list[dict]:
+        return []
+
     async def balance(self) -> str:
         return "—"
 
@@ -101,6 +105,30 @@ class DonatixSupplier:
             if len(page) < 500:
                 return items
             offset += 500
+
+    @property
+    def origin(self) -> str:
+        """https://donatix.tj — prefix for relative image paths."""
+        m = re.match(r"(https?://[^/]+)", self.base_url)
+        return m.group(1) if m else ""
+
+    async def categories(self) -> list[dict]:
+        """Games/brands with their pictures: v1 /categories plus the FazerCards-compatible v2 /topups list."""
+        found: list[dict] = []
+        urls = [self.base_url + "/categories"]
+        if self.base_url.endswith("/v1"):
+            urls.append(self.base_url[:-3] + "/v2/topups")
+        for url in urls:
+            try:
+                session = await self._http()
+                async with session.get(url) as r:
+                    data = await r.json(content_type=None)
+                if isinstance(data, dict):
+                    data = next((v for k, v in data.items() if isinstance(v, list)), [])
+                found += [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+            except Exception as e:
+                log.warning("categories %s: %s", url, e)
+        return found
 
     async def usd_rate(self) -> float | None:
         """Somoni per 1 USD as published in /payments/methods (format not fixed in the docs, so search for it)."""
