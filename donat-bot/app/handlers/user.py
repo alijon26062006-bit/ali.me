@@ -1,5 +1,6 @@
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from .. import keyboards as kb
@@ -20,7 +21,8 @@ async def send_welcome(message: Message, lang: str):
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject, bot: Bot):
+async def cmd_start(message: Message, command: CommandObject, bot: Bot, state: FSMContext):
+    await state.clear()
     ref_by = None
     if command.args and command.args.startswith("ref_") and command.args[4:].isdigit():
         ref_by = int(command.args[4:])
@@ -41,7 +43,8 @@ async def cmd_id(message: Message):
 
 
 @router.message(F.text.endswith("Меню"))
-async def menu_button(message: Message):
+async def menu_button(message: Message, state: FSMContext):
+    await state.clear()
     user, _ = await ensure_user(message.from_user)
     await send_welcome(message, user["lang"])
 

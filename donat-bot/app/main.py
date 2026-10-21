@@ -9,7 +9,7 @@ from aiohttp import web
 
 from .config import config
 from .db import db
-from .handlers import admin, user
+from .handlers import admin, shop, user
 from .services import supplier_poller
 from .web import create_app
 
@@ -22,7 +22,7 @@ async def main():
     await db.connect()
     bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-    dp.include_routers(admin.router, user.router)  # admin first: its FSM states must win
+    dp.include_routers(admin.router, shop.router, user.router)  # admin first: its FSM states must win
 
     await bot.set_my_commands([BotCommand(command="start", description="Менюи асосӣ")])
     if config.webapp_url.startswith("https://"):

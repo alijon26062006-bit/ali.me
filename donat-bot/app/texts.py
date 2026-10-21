@@ -50,7 +50,7 @@ TEXTS = {
         "currency_choose": "💱 Асъорро интихоб кунед:",
         "currency_set": "✅ Асъор: {cur}",
         "pay_request": (
-            "➕ <b>Дархости пуркунӣ аз мини-апп қабул шуд!</b>\n\n"
+            "➕ <b>Дархости пардохт қабул шуд!</b>\n\n"
             "🧾 Дархост: <code>{code}</code>\n"
             "{order_line}"
             "\n💳 Маблағ: <b>{amount}</b>\n"
@@ -79,6 +79,22 @@ TEXTS = {
         "order_cancelled": "❌ Фармоиши <code>{code}</code> бекор шуд.",
         "ref_bonus": "👥 Бонуси ҳамкорӣ: <b>+{amount}</b> аз хариди дӯстатон!",
         "new_ref": "👥 Дӯсти нав бо истиноди шумо ҳамроҳ шуд!",
+        "shop_choose_game": "🎮 <b>{title}</b>\n\nМаҳсулотро интихоб кунед 👇",
+        "shop_group": "<b>{title}</b>\n\nБозиро интихоб кунед 👇",
+        "shop_ask_uid": "🛒 <b>{product}</b> — <b>{price}</b>\n\n✍️ {uid_label}-ро фиристед:\n<i>{placeholder}</i>",
+        "shop_bad_uid": "❌ {uid_label} нодуруст. Боз фиристед:",
+        "shop_confirm": (
+            "🧾 <b>Тасдиқи фармоиш</b>\n\n"
+            "🎮 {cat}\n📦 <b>{product}</b>\n🆔 {uid_label}: <code>{uid}</code>\n💰 Нарх: <b>{price}</b>\n"
+            "👛 Баланс: {balance}\n\nТарзи пардохтро интихоб кунед 👇"
+        ),
+        "shop_from_balance": "👛 Аз баланс ({balance})",
+        "shop_change_uid": "✏️ Иваз кардани ID",
+        "shop_cancel": "❌ Бекор кардан",
+        "shop_cancelled": "❌ Фармоиш бекор шуд.",
+        "shop_created_bank": "✅ Фармоиши <code>{order}</code> сохта шуд. Дастури пардохт дар поён 👇",
+        "shop_created_balance": "✅ Фармоиши <code>{order}</code> пардохт шуд ва дар раванди иҷро аст.",
+        "shop_expired": "Вақти фармоиш гузашт. Аз нав интихоб кунед.",
     },
     "ru": {
         "menu_hint": "<i>Главное меню всегда доступно снизу</i> ⬇️",
@@ -129,7 +145,7 @@ TEXTS = {
         "currency_choose": "💱 Выберите валюту:",
         "currency_set": "✅ Валюта: {cur}",
         "pay_request": (
-            "➕ <b>Заявка на пополнение из мини-апп принята!</b>\n\n"
+            "➕ <b>Заявка на оплату принята!</b>\n\n"
             "🧾 Заявка: <code>{code}</code>\n"
             "{order_line}"
             "\n💳 Сумма: <b>{amount}</b>\n"
@@ -158,6 +174,22 @@ TEXTS = {
         "order_cancelled": "❌ Заказ <code>{code}</code> отменён.",
         "ref_bonus": "👥 Партнёрский бонус: <b>+{amount}</b> с покупки вашего друга!",
         "new_ref": "👥 По вашей ссылке присоединился новый друг!",
+        "shop_choose_game": "🎮 <b>{title}</b>\n\nВыберите товар 👇",
+        "shop_group": "<b>{title}</b>\n\nВыберите игру 👇",
+        "shop_ask_uid": "🛒 <b>{product}</b> — <b>{price}</b>\n\n✍️ Отправьте {uid_label}:\n<i>{placeholder}</i>",
+        "shop_bad_uid": "❌ Неверный {uid_label}. Отправьте ещё раз:",
+        "shop_confirm": (
+            "🧾 <b>Подтверждение заказа</b>\n\n"
+            "🎮 {cat}\n📦 <b>{product}</b>\n🆔 {uid_label}: <code>{uid}</code>\n💰 Цена: <b>{price}</b>\n"
+            "👛 Баланс: {balance}\n\nВыберите способ оплаты 👇"
+        ),
+        "shop_from_balance": "👛 С баланса ({balance})",
+        "shop_change_uid": "✏️ Изменить ID",
+        "shop_cancel": "❌ Отменить",
+        "shop_cancelled": "❌ Заказ отменён.",
+        "shop_created_bank": "✅ Заказ <code>{order}</code> создан. Инструкция по оплате ниже 👇",
+        "shop_created_balance": "✅ Заказ <code>{order}</code> оплачен и выполняется.",
+        "shop_expired": "Время заказа истекло. Выберите заново.",
     },
 }
 
