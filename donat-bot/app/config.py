@@ -39,6 +39,9 @@ class Config:
     rub_rate: float = float(os.getenv("RUB_RATE", "0.1073"))  # 1 RUB = X TJS
     referral_percent: float = float(os.getenv("REFERRAL_PERCENT", "3"))
     topup_amounts: list[int] = field(default_factory=lambda: [10, 20, 50, 100, 300, 500, 700, 1000])
+    # Supplier (auto-delivery) API
+    supplier_api_url: str = os.getenv("SUPPLIER_API_URL", "").rstrip("/")
+    supplier_api_key: str = os.getenv("SUPPLIER_API_KEY", "")
 
     @property
     def admin_targets(self) -> list[int]:

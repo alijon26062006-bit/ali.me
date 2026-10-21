@@ -32,14 +32,15 @@
 
 ### Typography
 
-- **Heading Font:** Russo One
-- **Body Font:** Chakra Petch
+- **Heading Font:** Unbounded
+- **Body Font:** Inter
+- **Note:** Chakra Petch / Russo One lack Tajik Cyrillic letters (ҳ ӣ ӯ ҷ қ ғ) — replaced with Unbounded + Inter.
 - **Mood:** gaming, bold, action, esports, competitive, energetic
-- **Google Fonts:** [Russo One + Chakra Petch](https://fonts.google.com/share?selection.family=Chakra+Petch:wght@300;400;500;600;700|Russo+One)
+- **Google Fonts:** [Unbounded + Inter](https://fonts.google.com/share?selection.family=Inter:wght@400;500;600;700;800|Unbounded:wght@600;700;800)
 
 **CSS Import:**
 ```css
-@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=Russo+One&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap');
 ```
 
 ### Spacing Variables

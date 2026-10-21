@@ -6,3 +6,5 @@ uploads/
 .vscode/
 *.log
 __pycache__/
+*.db
+venv/

@@ -1,0 +1,281 @@
+import json
+import random
+import time
+
+import aiosqlite
+
+from .config import config
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    balance REAL NOT NULL DEFAULT 0,
+    total_spent REAL NOT NULL DEFAULT 0,
+    lang TEXT NOT NULL DEFAULT 'tj',
+    currency TEXT NOT NULL DEFAULT 'TJS',
+    theme TEXT NOT NULL DEFAULT 'dark',
+    pin_hash TEXT,
+    ref_by INTEGER,
+    ref_earned REAL NOT NULL DEFAULT 0,
+    banned INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    items TEXT NOT NULL,
+    title TEXT NOT NULL,
+    amount REAL NOT NULL,
+    game_uid TEXT NOT NULL,
+    method TEXT NOT NULL,
+    status TEXT NOT NULL,           -- unpaid | processing | done | cancelled
+    supplier_ref TEXT,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS topups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    method TEXT NOT NULL,
+    status TEXT NOT NULL,           -- waiting | review | approved | rejected | cancelled
+    order_id INTEGER,
+    receipt_file_id TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    kind TEXT NOT NULL,             -- topup | purchase | refund | referral | admin
+    ref TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS price_overrides (
+    product_id TEXT PRIMARY KEY,
+    price REAL,
+    active INTEGER NOT NULL DEFAULT 1
+);
+"""
+
+
+def now() -> int:
+    return int(time.time())
+
+
+def order_code(order_id: int) -> str:
+    return f"ORD-{order_id + 1000}"
+
+
+def topup_code(topup_id: int) -> str:
+    return f"TOP-{topup_id + 2600}"
+
+
+class DB:
+    def __init__(self, path: str):
+        self.path = path
+        self.conn: aiosqlite.Connection | None = None
+
+    async def connect(self):
+        self.conn = await aiosqlite.connect(self.path)
+        self.conn.row_factory = aiosqlite.Row
+        await self.conn.executescript(SCHEMA)
+        await self.conn.commit()
+
+    async def close(self):
+        if self.conn:
+            await self.conn.close()
+
+    async def fetchone(self, sql: str, *args) -> dict | None:
+        async with self.conn.execute(sql, args) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def fetchall(self, sql: str, *args) -> list[dict]:
+        async with self.conn.execute(sql, args) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def execute(self, sql: str, *args) -> int:
+        cur = await self.conn.execute(sql, args)
+        await self.conn.commit()
+        return cur.lastrowid
+
+    # ---------- users ----------
+    async def get_user(self, user_id: int) -> dict | None:
+        return await self.fetchone("SELECT * FROM users WHERE id=?", user_id)
+
+    async def upsert_user(self, user_id: int, username: str | None, first_name: str | None,
+                          ref_by: int | None = None) -> tuple[dict, bool]:
+        user = await self.get_user(user_id)
+        if user:
+            await self.execute("UPDATE users SET username=?, first_name=? WHERE id=?",
+                               username, first_name, user_id)
+            return await self.get_user(user_id), False
+        if ref_by == user_id or (ref_by and not await self.get_user(ref_by)):
+            ref_by = None
+        await self.execute(
+            "INSERT INTO users (id, username, first_name, ref_by, created_at) VALUES (?,?,?,?,?)",
+            user_id, username, first_name, ref_by, now())
+        return await self.get_user(user_id), True
+
+    async def set_user_field(self, user_id: int, field: str, value):
+        assert field in {"lang", "currency", "theme", "pin_hash", "banned"}
+        await self.execute(f"UPDATE users SET {field}=? WHERE id=?", value, user_id)
+
+    async def change_balance(self, user_id: int, delta: float, kind: str, ref: str = "") -> bool:
+        """Atomically change balance; refuses to go below zero."""
+        cur = await self.conn.execute(
+            "UPDATE users SET balance = ROUND(balance + ?, 2) WHERE id=? AND balance + ? >= -0.001",
+            (delta, user_id, delta))
+        if cur.rowcount == 0:
+            await self.conn.commit()
+            return False
+        await self.conn.execute(
+            "INSERT INTO transactions (user_id, amount, kind, ref, created_at) VALUES (?,?,?,?,?)",
+            (user_id, round(delta, 2), kind, ref, now()))
+        await self.conn.commit()
+        return True
+
+    async def count_users(self) -> int:
+        row = await self.fetchone("SELECT COUNT(*) c FROM users")
+        return row["c"]
+
+    async def all_user_ids(self) -> list[int]:
+        return [r["id"] for r in await self.fetchall("SELECT id FROM users WHERE banned=0")]
+
+    async def referrals_count(self, user_id: int) -> int:
+        row = await self.fetchone("SELECT COUNT(*) c FROM users WHERE ref_by=?", user_id)
+        return row["c"]
+
+    # ---------- orders ----------
+    async def create_order(self, user_id: int, items: list[dict], title: str, amount: float,
+                           game_uid: str, method: str, status: str) -> int:
+        t = now()
+        return await self.execute(
+            "INSERT INTO orders (user_id, items, title, amount, game_uid, method, status, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            user_id, json.dumps(items, ensure_ascii=False), title, round(amount, 2), game_uid, method, status, t, t)
+
+    async def get_order(self, order_id: int) -> dict | None:
+        return await self.fetchone("SELECT * FROM orders WHERE id=?", order_id)
+
+    async def set_order_status(self, order_id: int, status: str, supplier_ref: str | None = None,
+                               note: str | None = None, only_from: str | None = None) -> bool:
+        sql = ("UPDATE orders SET status=?, supplier_ref=COALESCE(?, supplier_ref), note=COALESCE(?, note),"
+               " updated_at=? WHERE id=?")
+        args = [status, supplier_ref, note, now(), order_id]
+        if only_from:
+            sql += " AND status=?"
+            args.append(only_from)
+        cur = await self.conn.execute(sql, args)
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def user_orders(self, user_id: int, limit: int = 100) -> list[dict]:
+        return await self.fetchall("SELECT * FROM orders WHERE user_id=? ORDER BY id DESC LIMIT ?", user_id, limit)
+
+    async def orders_by_status(self, status: str, limit: int = 20) -> list[dict]:
+        return await self.fetchall("SELECT * FROM orders WHERE status=? ORDER BY id DESC LIMIT ?", status, limit)
+
+    # ---------- topups ----------
+    async def create_topup(self, user_id: int, amount: float, method: str, order_id: int | None = None) -> int:
+        t = now()
+        return await self.execute(
+            "INSERT INTO topups (user_id, amount, method, status, order_id, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?)", user_id, round(amount, 2), method, "waiting", order_id, t, t)
+
+    async def get_topup(self, topup_id: int) -> dict | None:
+        return await self.fetchone("SELECT * FROM topups WHERE id=?", topup_id)
+
+    async def waiting_topup(self, user_id: int) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM topups WHERE user_id=? AND status='waiting' ORDER BY id DESC LIMIT 1", user_id)
+
+    async def set_topup_status(self, topup_id: int, status: str, only_from: tuple[str, ...],
+                               receipt_file_id: str | None = None) -> bool:
+        marks = ",".join("?" * len(only_from))
+        cur = await self.conn.execute(
+            f"UPDATE topups SET status=?, receipt_file_id=COALESCE(?, receipt_file_id), updated_at=?"
+            f" WHERE id=? AND status IN ({marks})",
+            (status, receipt_file_id, now(), topup_id, *only_from))
+        await self.conn.commit()
+        return cur.rowcount > 0
+
+    async def unique_amount(self, base: float) -> float:
+        """Add random cents so the admin can match a transfer to a request."""
+        for _ in range(50):
+            amount = round(base + random.randint(1, 99) / 100, 2)
+            busy = await self.fetchone(
+                "SELECT id FROM topups WHERE amount=? AND status IN ('waiting','review')", amount)
+            if not busy:
+                return amount
+        return round(base + random.randint(1, 99) / 100, 2)
+
+    # ---------- transactions ----------
+    async def user_transactions(self, user_id: int, limit: int = 100) -> list[dict]:
+        return await self.fetchall(
+            "SELECT * FROM transactions WHERE user_id=? ORDER BY id DESC LIMIT ?", user_id, limit)
+
+    async def add_spent(self, user_id: int, amount: float):
+        await self.execute("UPDATE users SET total_spent = ROUND(total_spent + ?, 2) WHERE id=?", amount, user_id)
+
+    async def add_ref_earned(self, user_id: int, amount: float):
+        await self.execute("UPDATE users SET ref_earned = ROUND(ref_earned + ?, 2) WHERE id=?", amount, user_id)
+
+    # ---------- notifications ----------
+    async def notify(self, user_id: int, text: str):
+        await self.execute("INSERT INTO notifications (user_id, text, created_at) VALUES (?,?,?)",
+                           user_id, text, now())
+
+    async def notifications(self, user_id: int, limit: int = 50) -> list[dict]:
+        return await self.fetchall(
+            "SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT ?", user_id, limit)
+
+    async def unread_count(self, user_id: int) -> int:
+        row = await self.fetchone("SELECT COUNT(*) c FROM notifications WHERE user_id=? AND is_read=0", user_id)
+        return row["c"]
+
+    async def mark_read(self, user_id: int):
+        await self.execute("UPDATE notifications SET is_read=1 WHERE user_id=?", user_id)
+
+    # ---------- prices ----------
+    async def price_overrides(self) -> dict[str, dict]:
+        rows = await self.fetchall("SELECT * FROM price_overrides")
+        return {r["product_id"]: r for r in rows}
+
+    async def set_price(self, product_id: str, price: float | None = None, active: int | None = None):
+        await self.execute("INSERT OR IGNORE INTO price_overrides (product_id) VALUES (?)", product_id)
+        if price is not None:
+            await self.execute("UPDATE price_overrides SET price=? WHERE product_id=?", price, product_id)
+        if active is not None:
+            await self.execute("UPDATE price_overrides SET active=? WHERE product_id=?", active, product_id)
+
+    # ---------- stats ----------
+    async def stats(self) -> dict:
+        day = now() - 86400
+        q = self.fetchone
+        return {
+            "users": (await q("SELECT COUNT(*) c FROM users"))["c"],
+            "users_today": (await q("SELECT COUNT(*) c FROM users WHERE created_at>=?", day))["c"],
+            "orders_done": (await q("SELECT COUNT(*) c FROM orders WHERE status='done'"))["c"],
+            "orders_processing": (await q("SELECT COUNT(*) c FROM orders WHERE status='processing'"))["c"],
+            "revenue": (await q("SELECT COALESCE(SUM(amount),0) s FROM orders WHERE status='done'"))["s"],
+            "revenue_today": (await q("SELECT COALESCE(SUM(amount),0) s FROM orders WHERE status='done'"
+                                      " AND updated_at>=?", day))["s"],
+            "topups_review": (await q("SELECT COUNT(*) c FROM topups WHERE status='review'"))["c"],
+            "balances": (await q("SELECT COALESCE(SUM(balance),0) s FROM users"))["s"],
+        }
+
+
+db = DB(config.db_path)
