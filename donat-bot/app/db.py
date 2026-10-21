@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS notifications (
     is_read INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS price_overrides (
     product_id TEXT PRIMARY KEY,
     price REAL,
@@ -91,7 +95,28 @@ class DB:
         self.conn = await aiosqlite.connect(self.path)
         self.conn.row_factory = aiosqlite.Row
         await self.conn.executescript(SCHEMA)
+        await self._migrate()
         await self.conn.commit()
+        config.overrides.update({r["key"]: r["value"] for r in await self.fetchall("SELECT * FROM settings")})
+
+    async def _migrate(self):
+        """Add columns introduced after the first release to existing databases."""
+        new_columns = {
+            "topups": {"reject_reason": "TEXT", "receipt_unique_id": "TEXT", "reminded": "INTEGER NOT NULL DEFAULT 0",
+                       "handled_by": "INTEGER"},
+            "orders": {"handled_by": "INTEGER"},
+        }
+        for table, cols in new_columns.items():
+            existing = {r["name"] for r in await self.fetchall(f"PRAGMA table_info({table})")}
+            for name, decl in cols.items():
+                if name not in existing:
+                    await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+    # ---------- settings ----------
+    async def set_setting(self, key: str, value: str):
+        await self.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
+                           " ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, value)
+        config.overrides[key] = value
 
     async def close(self):
         if self.conn:
@@ -171,10 +196,11 @@ class DB:
         return await self.fetchone("SELECT * FROM orders WHERE id=?", order_id)
 
     async def set_order_status(self, order_id: int, status: str, supplier_ref: str | None = None,
-                               note: str | None = None, only_from: str | None = None) -> bool:
+                               note: str | None = None, only_from: str | None = None,
+                               handled_by: int | None = None) -> bool:
         sql = ("UPDATE orders SET status=?, supplier_ref=COALESCE(?, supplier_ref), note=COALESCE(?, note),"
-               " updated_at=? WHERE id=?")
-        args = [status, supplier_ref, note, now(), order_id]
+               " handled_by=COALESCE(?, handled_by), updated_at=? WHERE id=?")
+        args = [status, supplier_ref, note, handled_by, now(), order_id]
         if only_from:
             sql += " AND status=?"
             args.append(only_from)
@@ -203,12 +229,17 @@ class DB:
             "SELECT * FROM topups WHERE user_id=? AND status='waiting' ORDER BY id DESC LIMIT 1", user_id)
 
     async def set_topup_status(self, topup_id: int, status: str, only_from: tuple[str, ...],
-                               receipt_file_id: str | None = None) -> bool:
+                               receipt_file_id: str | None = None, receipt_unique_id: str | None = None,
+                               reject_reason: str | None = None, handled_by: int | None = None,
+                               amount: float | None = None) -> bool:
         marks = ",".join("?" * len(only_from))
         cur = await self.conn.execute(
-            f"UPDATE topups SET status=?, receipt_file_id=COALESCE(?, receipt_file_id), updated_at=?"
+            f"UPDATE topups SET status=?, receipt_file_id=COALESCE(?, receipt_file_id),"
+            f" receipt_unique_id=COALESCE(?, receipt_unique_id), reject_reason=COALESCE(?, reject_reason),"
+            f" handled_by=COALESCE(?, handled_by), amount=COALESCE(?, amount), updated_at=?"
             f" WHERE id=? AND status IN ({marks})",
-            (status, receipt_file_id, now(), topup_id, *only_from))
+            (status, receipt_file_id, receipt_unique_id, reject_reason, handled_by, amount, now(), topup_id,
+             *only_from))
         await self.conn.commit()
         return cur.rowcount > 0
 
@@ -221,6 +252,29 @@ class DB:
             if not busy:
                 return amount
         return round(base + random.randint(1, 99) / 100, 2)
+
+    async def topups_by_status(self, status: str, limit: int = 20) -> list[dict]:
+        return await self.fetchall("SELECT * FROM topups WHERE status=? ORDER BY id LIMIT ?", status, limit)
+
+    async def receipt_duplicates(self, unique_id: str, exclude_id: int) -> list[dict]:
+        return await self.fetchall("SELECT * FROM topups WHERE receipt_unique_id=? AND id<>? ORDER BY id",
+                                   unique_id, exclude_id)
+
+    async def topups_to_remind(self, older_than: int, reminded_below: int) -> list[dict]:
+        return await self.fetchall("SELECT * FROM topups WHERE status='review' AND updated_at<=? AND reminded<?",
+                                   now() - older_than, reminded_below)
+
+    async def mark_reminded(self, topup_id: int, level: int):
+        await self.execute("UPDATE topups SET reminded=? WHERE id=?", level, topup_id)
+
+    async def user_topups(self, user_id: int, limit: int = 100) -> list[dict]:
+        return await self.fetchall("SELECT * FROM topups WHERE user_id=? ORDER BY id DESC LIMIT ?", user_id, limit)
+
+    async def find_user(self, query: str) -> dict | None:
+        q = query.strip().lstrip("@")
+        if q.isdigit():
+            return await self.get_user(int(q))
+        return await self.fetchone("SELECT * FROM users WHERE LOWER(username)=LOWER(?)", q)
 
     # ---------- transactions ----------
     async def user_transactions(self, user_id: int, limit: int = 100) -> list[dict]:

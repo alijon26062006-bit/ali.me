@@ -100,6 +100,8 @@ async def build_items(raw_items: list[dict]) -> tuple[list[dict], float, str]:
 
 
 async def create_order(bot: Bot, user: dict, raw_items: list[dict], game_uid: str, method: str) -> dict:
+    if user.get("banned"):
+        raise ShopError("⛔")
     game_uid = (game_uid or "").strip()
     if not 3 <= len(game_uid) <= 64:
         raise ShopError("ID-и бозиро дуруст ворид кунед")
@@ -229,6 +231,8 @@ async def supplier_poller(bot: Bot):
 
 # ---------------------------------------------------------------- top-ups
 async def create_topup(bot: Bot, user: dict, base_amount: float, method: str, order_id: int | None = None) -> dict:
+    if user.get("banned"):
+        raise ShopError("⛔")
     pm = config.method(method)
     if not pm:
         raise ShopError("Тарзи пардохт нодуруст")
@@ -247,7 +251,7 @@ async def create_topup(bot: Bot, user: dict, base_amount: float, method: str, or
 
 async def send_payment_message(bot: Bot, user: dict, topup_id: int):
     topup = await db.get_topup(topup_id)
-    pm = config.method(topup["method"])
+    pm = any_method(topup["method"])
     lang = user["lang"]
     amount = money(topup["amount"])
     if pm.currency == "RUB":
@@ -277,44 +281,113 @@ async def cancel_topup(bot: Bot, topup_id: int, silent: bool = False) -> bool:
     return True
 
 
-async def submit_receipt(bot: Bot, user: dict, file_id: str) -> dict | None:
-    topup = await db.waiting_topup(user["id"])
-    if not topup or not await db.set_topup_status(topup["id"], "review", ("waiting",), receipt_file_id=file_id):
-        return None
-    pm = config.method(topup["method"])
+def any_method(method_id: str):
+    """Payment method by id, even if an admin switched it off after the request was created."""
+    return next((m for m in config.all_payment_methods if m.id == method_id), None)
+
+
+REJECT_REASONS = {  # code -> {lang: text}; the admin sees Tajik, the customer their own language
+    "amount": {"tj": "Маблағ нодуруст", "ru": "Неверная сумма"},
+    "notfound": {"tj": "Пардохт ёфт нашуд", "ru": "Платёж не найден"},
+    "fake": {"tj": "Чеки қалбакӣ", "ru": "Поддельный чек"},
+    "unreadable": {"tj": "Чек хонда намешавад", "ru": "Чек не читается"},
+    "old": {"tj": "Чеки кӯҳна / такрорӣ", "ru": "Старый / повторный чек"},
+}
+
+
+def receipt_kb(topup_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardButton
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [b(text="✅ Тасдиқ", callback_data=f"top:ok:{topup_id}", style="success"),
+         b(text="❌ Рад", callback_data=f"top:no:{topup_id}", style="danger")],
+        [b(text="✏️ Маблағи дигар", callback_data=f"top:amt:{topup_id}")],
+    ])
+
+
+def reject_kb(topup_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardButton
+    rows = [[b(text=titles["tj"], callback_data=f"top:rs:{topup_id}:{code}")] for code, titles in REJECT_REASONS.items()]
+    rows.append([b(text="✍️ Сабаби дигар", callback_data=f"top:rs:{topup_id}:custom")])
+    rows.append([b(text="⬅️ Бозгашт", callback_data=f"top:back:{topup_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def receipt_caption(topup: dict) -> str:
+    user = await db.get_user(topup["user_id"])
+    pm = any_method(topup["method"])
     order_line = ""
     if topup["order_id"]:
         order = await db.get_order(topup["order_id"])
         order_line = f"\n🛍 {order['title']}\n🎮 ID: <code>{order['game_uid']}</code>"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Тасдиқ", callback_data=f"top:ok:{topup['id']}", style="success"),
-        InlineKeyboardButton(text="❌ Рад", callback_data=f"top:no:{topup['id']}", style="danger"),
-    ]])
-    await notify_admins(
-        bot,
-        f"🧾 <b>Чеки нав</b> <code>{topup_code(topup['id'])}</code>\n\n👤 {user_link(user)}\n"
-        f"💰 <b>{money(topup['amount'])}</b>" + (f" ≈ {money(topup['amount'], 'RUB')}" if pm.currency == "RUB" else "")
-        + f"\n🏦 {pm.title}{order_line}",
-        kb, photo=file_id)
+    rub = f" ≈ {money(topup['amount'], 'RUB')}" if pm and pm.currency == "RUB" else ""
+    text = (f"🧾 <b>Чек</b> <code>{topup_code(topup['id'])}</code>\n\n👤 {user_link(user)}\n"
+            f"💰 <b>{money(topup['amount'])}</b>{rub}\n🏦 {pm.title if pm else topup['method']}{order_line}")
+    if topup.get("receipt_unique_id"):
+        dups = await db.receipt_duplicates(topup["receipt_unique_id"], topup["id"])
+        if dups:
+            refs = ", ".join(f"{topup_code(d['id'])} ({d['status']})" for d in dups[:5])
+            text += f"\n\n⚠️ <b>ДИҚҚАТ: ин чек пештар фиристода шуда буд!</b>\n{refs}"
+    return text
+
+
+async def submit_receipt(bot: Bot, user: dict, file_id: str, unique_id: str | None = None) -> dict | None:
+    topup = await db.waiting_topup(user["id"])
+    if not topup or not await db.set_topup_status(topup["id"], "review", ("waiting",), receipt_file_id=file_id,
+                                                  receipt_unique_id=unique_id):
+        return None
+    topup = await db.get_topup(topup["id"])
+    await notify_admins(bot, await receipt_caption(topup), receipt_kb(topup["id"]), photo=file_id)
     return topup
 
 
-async def approve_topup(bot: Bot, topup_id: int) -> bool:
-    if not await db.set_topup_status(topup_id, "approved", ("waiting", "review")):
+async def approve_topup(bot: Bot, topup_id: int, amount: float | None = None, admin_id: int | None = None) -> bool:
+    if amount is not None and amount <= 0:
+        return False
+    if not await db.set_topup_status(topup_id, "approved", ("waiting", "review"), handled_by=admin_id,
+                                     amount=round(amount, 2) if amount is not None else None):
         return False
     topup = await db.get_topup(topup_id)
     await db.change_balance(topup["user_id"], topup["amount"], "topup", topup_code(topup_id))
     await notify_user(bot, topup["user_id"], "topup_approved", amount=money(topup["amount"]), code=topup_code(topup_id))
-    if topup["order_id"]:
-        await pay_order_from_balance(bot, topup["order_id"])
+    if topup["order_id"] and not await pay_order_from_balance(bot, topup["order_id"]):
+        order = await db.get_order(topup["order_id"])
+        if order and await db.set_order_status(order["id"], "cancelled", only_from="unpaid", note="underpaid"):
+            await notify_user(bot, topup["user_id"], "order_underpaid", code=order_code(order["id"]),
+                              need=money(order["amount"]))
     return True
 
 
-async def reject_topup(bot: Bot, topup_id: int) -> bool:
-    if not await db.set_topup_status(topup_id, "rejected", ("waiting", "review")):
-        return False
+async def reject_topup(bot: Bot, topup_id: int, reason: str = "", admin_id: int | None = None) -> bool:
+    """`reason` is a REJECT_REASONS code or the admin's own text."""
     topup = await db.get_topup(topup_id)
+    if not topup:
+        return False
+    user = await db.get_user(topup["user_id"])
+    lang = user["lang"] if user else "tj"
+    reason_text = REJECT_REASONS[reason].get(lang, REJECT_REASONS[reason]["tj"]) if reason in REJECT_REASONS else reason
+    if not await db.set_topup_status(topup_id, "rejected", ("waiting", "review"), reject_reason=reason_text or None,
+                                     handled_by=admin_id):
+        return False
     if topup["order_id"]:
         await db.set_order_status(topup["order_id"], "cancelled", only_from="unpaid")
-    await notify_user(bot, topup["user_id"], "topup_rejected", code=topup_code(topup_id))
+    text = t(lang, "topup_rejected", code=topup_code(topup_id))
+    if reason_text:
+        text += "\n\n" + t(lang, "reject_reason", reason=reason_text)
+    await db.notify(topup["user_id"], text)
+    await safe_send(bot, topup["user_id"], text)
     return True
+
+
+async def receipt_reminder(bot: Bot):
+    """Reminds admins about receipts waiting too long: after 10 and again after 30 minutes."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            for level, age in ((1, 600), (2, 1800)):
+                for topup in await db.topups_to_remind(age, level):
+                    await db.mark_reminded(topup["id"], level)
+                    minutes = age // 60
+                    await notify_admins(bot, f"⏰ <b>Чек {minutes}+ дақиқа интизор аст!</b>\n\n" + await receipt_caption(topup),
+                                        receipt_kb(topup["id"]), photo=topup["receipt_file_id"])
+        except Exception:
+            log.exception("receipt reminder")

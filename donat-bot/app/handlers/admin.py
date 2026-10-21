@@ -9,7 +9,8 @@ from aiogram.types import CallbackQuery, Message
 from ..catalog import PRODUCTS
 from ..config import config
 from ..db import db, order_code, topup_code
-from ..services import approve_topup, complete_order, money, refund_order, reject_topup, start_fulfillment
+from ..services import (REJECT_REASONS, approve_topup, complete_order, money, receipt_kb, refund_order, reject_kb,
+                        reject_topup, start_fulfillment)
 from ..supplier import supplier
 
 router = Router(name="admin")
@@ -17,9 +18,9 @@ router.message.filter(F.from_user.id.in_(config.admin_ids))
 router.callback_query.filter(F.from_user.id.in_(config.admin_ids))
 
 HELP = (
-    "🛠 <b>Панели админ</b>\n\n"
+    "🛠 <b>Фармонҳои админ</b> (ҳама чиз инчунин дар /panel бо тугмаҳо)\n\n"
     "{stats}\n\n"
-    "<b>Фармонҳо:</b>\n"
+    "/panel — панел бо тугмаҳо\n"
     "/stats — статистика\n"
     "/pending — фармоишҳои интизор\n"
     "/setprice <code>id нарх</code> — нархро иваз кардан\n"
@@ -46,8 +47,8 @@ async def stats_text() -> str:
             f"🔌 Таъминкунанда: <b>{'API' if supplier.enabled else 'дастӣ'}</b> · баланс {await supplier.balance()}")
 
 
-@router.message(Command("admin"))
-async def cmd_admin(message: Message):
+@router.message(Command("help"))
+async def cmd_help(message: Message):
     await message.answer(HELP.format(stats=await stats_text()))
 
 
@@ -157,15 +158,95 @@ async def _mark(call: CallbackQuery, suffix: str):
         await call.message.edit_reply_markup(reply_markup=None)
 
 
-@router.callback_query(F.data.startswith("top:ok:") | F.data.startswith("top:no:"))
-async def cb_topup(call: CallbackQuery, bot: Bot):
-    _, action, tid = call.data.split(":")
-    tid = int(tid)
-    ok = await (approve_topup(bot, tid) if action == "ok" else reject_topup(bot, tid))
-    if not ok:
+class ReceiptInput(StatesGroup):
+    amount = State()
+    reason = State()
+
+
+@router.callback_query(F.data.startswith("top:ok:"))
+async def cb_topup_ok(call: CallbackQuery, bot: Bot):
+    tid = int(call.data.split(":")[2])
+    if not await approve_topup(bot, tid, admin_id=call.from_user.id):
         return await call.answer("Аллакай коркард шудааст", show_alert=True)
-    await _mark(call, f"✅ Тасдиқ {topup_code(tid)}" if action == "ok" else f"❌ Рад {topup_code(tid)}")
+    await _mark(call, f"✅ Тасдиқ {topup_code(tid)}")
+    await call.answer("✅")
+
+
+@router.callback_query(F.data.startswith("top:no:"))
+async def cb_topup_no(call: CallbackQuery):
+    tid = int(call.data.split(":")[2])
+    await call.message.edit_reply_markup(reply_markup=reject_kb(tid))
+    await call.answer("Сабабро интихоб кунед")
+
+
+@router.callback_query(F.data.startswith("top:back:"))
+async def cb_topup_back(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_reply_markup(reply_markup=receipt_kb(int(call.data.split(":")[2])))
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("top:rs:"))
+async def cb_topup_reason(call: CallbackQuery, state: FSMContext, bot: Bot):
+    _, _, tid, code = call.data.split(":")
+    tid = int(tid)
+    if code == "custom":
+        await state.set_state(ReceiptInput.reason)
+        await state.update_data(topup_id=tid, chat_id=call.message.chat.id, message_id=call.message.message_id)
+        await call.message.answer(f"✍️ Сабаби радро барои {topup_code(tid)} нависед (ба муштарӣ фиристода мешавад)."
+                                  " /cancel — бекор")
+        return await call.answer()
+    if not await reject_topup(bot, tid, code, admin_id=call.from_user.id):
+        return await call.answer("Аллакай коркард шудааст", show_alert=True)
+    await _mark(call, f"❌ Рад {topup_code(tid)}: {REJECT_REASONS[code]['tj']}")
+    await call.answer("❌")
+
+
+@router.callback_query(F.data.startswith("top:amt:"))
+async def cb_topup_amount(call: CallbackQuery, state: FSMContext):
+    tid = int(call.data.split(":")[2])
+    topup = await db.get_topup(tid)
+    if not topup or topup["status"] not in ("waiting", "review"):
+        return await call.answer("Аллакай коркард шудааст", show_alert=True)
+    await state.set_state(ReceiptInput.amount)
+    await state.update_data(topup_id=tid, chat_id=call.message.chat.id, message_id=call.message.message_id)
+    await call.message.answer(f"💰 Маблағи воқеан гирифташударо барои {topup_code(tid)} нависед"
+                              f" (дархост: {money(topup['amount'])}). Масалан: <code>50</code>\n/cancel — бекор")
+    await call.answer()
+
+
+async def _mark_by_id(bot: Bot, data: dict, suffix: str, who: str):
+    """Mark the original receipt message after a typed reply (amount / custom reason)."""
+    try:
+        await bot.edit_message_reply_markup(chat_id=data["chat_id"], message_id=data["message_id"], reply_markup=None)
+    except Exception:
+        pass
+    await bot.send_message(data["chat_id"], f"{suffix} — {who}", reply_to_message_id=data["message_id"])
+
+
+@router.message(ReceiptInput.amount, F.text, ~F.text.startswith("/"))
+async def got_amount(message: Message, state: FSMContext, bot: Bot):
+    try:
+        amount = round(float(message.text.replace(",", ".").replace(" ", "")), 2)
+        assert 0 < amount <= 100000
+    except (ValueError, AssertionError):
+        return await message.answer("Рақами дуруст нависед, масалан 50 ё 44.92")
+    data = await state.get_data()
+    await state.clear()
+    if not await approve_topup(bot, data["topup_id"], amount=amount, admin_id=message.from_user.id):
+        return await message.answer("Аллакай коркард шудааст")
+    await _mark_by_id(bot, data, f"✅ Тасдиқ {topup_code(data['topup_id'])} бо маблағи {money(amount)}",
+                      message.from_user.first_name)
+
+
+@router.message(ReceiptInput.reason, F.text, ~F.text.startswith("/"))
+async def got_reason(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    await state.clear()
+    reason = message.text.strip()[:300]
+    if not await reject_topup(bot, data["topup_id"], reason, admin_id=message.from_user.id):
+        return await message.answer("Аллакай коркард шудааст")
+    await _mark_by_id(bot, data, f"❌ Рад {topup_code(data['topup_id'])}: {reason}", message.from_user.first_name)
 
 
 @router.callback_query(F.data.startswith("ord:"))

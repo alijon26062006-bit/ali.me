@@ -111,6 +111,9 @@ async def got_uid(message: Message, state: FSMContext):
         rows.append([B(text=t(lang, "shop_from_balance", balance=money(user["balance"])), callback_data="sm:balance",
                        style="success")])
     rows += [[B(text=f"🏦 {m.title}", callback_data=f"sm:{m.id}")] for m in config.payment_methods]
+    if not rows:
+        await state.clear()
+        return await message.answer(t(lang, "no_methods"))
     rows.append([B(text=t(lang, "shop_change_uid"), callback_data=f"sp:{cat['id']}:{_index(cat, product['id'])}"),
                  B(text=t(lang, "shop_cancel"), callback_data="sx")])
     await message.answer(t(lang, "shop_confirm", cat=cat["title"], product=product["title"], uid_label=cat["uid_label"],

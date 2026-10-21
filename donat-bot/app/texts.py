@@ -79,6 +79,10 @@ TEXTS = {
         "order_cancelled": "❌ Фармоиши <code>{code}</code> бекор шуд.",
         "ref_bonus": "👥 Бонуси ҳамкорӣ: <b>+{amount}</b> аз хариди дӯстатон!",
         "new_ref": "👥 Дӯсти нав бо истиноди шумо ҳамроҳ шуд!",
+        "reject_reason": "📝 Сабаб: <b>{reason}</b>",
+        "order_underpaid": ("⚠️ Маблағи гузаронидашуда барои фармоиши <code>{code}</code> ({need}) нокифоя аст.\n"
+                            "Пул ба баланси шумо гузошта шуд — фармоишро аз нав аз баланс пардохт кунед."),
+        "no_methods": "Ҳоло тарзи пардохт дастрас нест. Лутфан ба дастгирӣ нависед.",
         "shop_choose_game": "🎮 <b>{title}</b>\n\nМаҳсулотро интихоб кунед 👇",
         "shop_group": "<b>{title}</b>\n\nБозиро интихоб кунед 👇",
         "shop_ask_uid": "🛒 <b>{product}</b> — <b>{price}</b>\n\n✍️ {uid_label}-ро фиристед:\n<i>{placeholder}</i>",
@@ -174,6 +178,10 @@ TEXTS = {
         "order_cancelled": "❌ Заказ <code>{code}</code> отменён.",
         "ref_bonus": "👥 Партнёрский бонус: <b>+{amount}</b> с покупки вашего друга!",
         "new_ref": "👥 По вашей ссылке присоединился новый друг!",
+        "reject_reason": "📝 Причина: <b>{reason}</b>",
+        "order_underpaid": ("⚠️ Переведённой суммы не хватает для заказа <code>{code}</code> ({need}).\n"
+                            "Деньги зачислены на баланс — оформите заказ заново с оплатой с баланса."),
+        "no_methods": "Сейчас способы оплаты недоступны. Напишите в поддержку.",
         "shop_choose_game": "🎮 <b>{title}</b>\n\nВыберите товар 👇",
         "shop_group": "<b>{title}</b>\n\nВыберите игру 👇",
         "shop_ask_uid": "🛒 <b>{product}</b> — <b>{price}</b>\n\n✍️ Отправьте {uid_label}:\n<i>{placeholder}</i>",

@@ -139,7 +139,9 @@ async def cb_cancel_topup(call: CallbackQuery, bot: Bot):
 @router.message(F.photo)
 async def receipt(message: Message, bot: Bot):
     user, _ = await ensure_user(message.from_user)
-    topup = await submit_receipt(bot, user, message.photo[-1].file_id)
+    if user["banned"]:
+        return
+    topup = await submit_receipt(bot, user, message.photo[-1].file_id, message.photo[-1].file_unique_id)
     if not topup:
         return await message.answer(t(user["lang"], "receipt_no_request"))
     await message.answer(t(user["lang"], "receipt_received", code=topup_code(topup["id"])))

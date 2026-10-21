@@ -138,7 +138,7 @@
       sniper: "Снайпер", freeLook: "Free Look", fireBtn: "Андозаи тугмаи оташ", dpi: "DPI (тавсия)",
       selected: "Интихоб шуд", shareRef: "Даъват кардан", copyLink: "Нусха", terms: "Шартҳои истифода",
       termsText: "Пардохт пас аз тасдиқи чек ба баланс ворид мешавад. Фармоиш ба ID-е, ки шумо ворид кардед, фиристода мешавад — масъулияти дурустии ID бар дӯши харидор аст. Пас аз иҷро бозгашти пул имконнопазир аст. Агар фармоиш иҷро нашавад, маблағ ба баланс баргардонида мешавад.",
-      cats: "категория", noResults: "Ҳеҷ чиз ёфт нашуд", insufficient: "Баланс нокифоя — бонкро интихоб кунед",
+      noMethods: "Ҳоло тарзи пардохт дастрас нест. Ба дастгирӣ нависед.", cats: "категория", noResults: "Ҳеҷ чиз ёфт нашуд", insufficient: "Баланс нокифоя — бонкро интихоб кунед",
     },
     ru: {
       morning: "Доброе утро", day: "Добрый день", evening: "Добрый вечер", night: "Доброй ночи",
@@ -176,7 +176,7 @@
       sniper: "Снайпер", freeLook: "Свободный обзор", fireBtn: "Размер кнопки огня", dpi: "DPI (рекомендация)",
       selected: "Выбрано", shareRef: "Пригласить", copyLink: "Копировать", terms: "Условия использования",
       termsText: "Оплата зачисляется на баланс после проверки чека. Заказ отправляется на указанный вами ID — ответственность за правильность ID несёт покупатель. После выполнения возврат невозможен. Если заказ не выполнен, сумма возвращается на баланс.",
-      cats: "категорий", noResults: "Ничего не найдено", insufficient: "Недостаточно средств — выберите банк",
+      noMethods: "Сейчас способы оплаты недоступны. Напишите в поддержку.", cats: "категорий", noResults: "Ничего не найдено", insufficient: "Недостаточно средств — выберите банк",
     },
   };
   let LANG = "tj";
@@ -402,7 +402,10 @@
     const lines = co.items.map((it) => [productById(it.product_id)[0], it.qty]).filter(([p]) => p);
     const total = lines.reduce((s, [p, q]) => s + p.price * q, 0);
     co.total = total;
-    if (!co.method) co.method = S.user.balance >= total ? "balance" : "alif";
+    const firstBank = S.boot.methods[0] ? S.boot.methods[0].id : "balance";
+    if (!co.method || (co.method !== "balance" && !S.boot.methods.some((m) => m.id === co.method))) {
+      co.method = S.user.balance >= total ? "balance" : firstBank;
+    }
     const title = lines.map(([p, q]) => p.title + (q > 1 ? ` ×${q}` : "")).join(", ");
     return `${topbar(T("checkout"))}
       <div class="summary"><span class="ic">${icon(lines[0] && lines[0][0].art === "coin" ? "coins" : "gem")}</span>
@@ -486,7 +489,8 @@
 
   // ---- top-up
   VIEWS.topup = () => {
-    const tp = S.topup || (S.topup = { amount: 0, method: "alif" });
+    const tp = S.topup || (S.topup = { amount: 0, method: S.boot.methods[0] ? S.boot.methods[0].id : "" });
+    if (!S.boot.methods.length) return `${topbar(T("topupTitle"))}<div class="empty">${icon("card")}<div>${esc(T("noMethods"))}</div></div>`;
     const rub = tp.amount ? Math.round(tp.amount / S.boot.rub_rate) : 0;
     return `${topbar(T("topupTitle"))}
       <div class="summary"><span class="ic">${icon("wallet")}</span><span class="grow"><span class="k">${esc(T("addToBalance").toUpperCase())}</span>
