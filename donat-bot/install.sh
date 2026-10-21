@@ -24,9 +24,14 @@ BOT_TOKEN=${1:-${BOT_TOKEN:-}}
 ADMIN_IDS=${2:-${ADMIN_IDS:-}}
 DOMAIN=${3:-${DOMAIN:-}}
 BOT_TOKEN=${BOT_TOKEN//[[:space:]]/}
+EXISTING_TOKEN=""
+[ -f "$APP/.env" ] && EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$APP/.env" | cut -d= -f2- || true)
+if [ -z "$BOT_TOKEN" ] && [ -n "$EXISTING_TOKEN" ]; then  # update: keep saved token and settings
+  BOT_TOKEN=$EXISTING_TOKEN
+  ADMIN_IDS=${ADMIN_IDS:-$(grep -E '^ADMIN_IDS=' "$APP/.env" | cut -d= -f2- || true)}
+  DOMAIN=${DOMAIN:-$(grep -E '^WEBAPP_URL=https://' "$APP/.env" | sed 's#^WEBAPP_URL=https://##' || true)}
+fi
 if [ -z "$BOT_TOKEN" ]; then  # interactive fallback
-  EXISTING_TOKEN=""
-  [ -f "$APP/.env" ] && EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$APP/.env" | cut -d= -f2- || true)
   while [ -z "$BOT_TOKEN" ]; do
     BOT_TOKEN=$(ask_secret "Токени бот (аз @BotFather)${EXISTING_TOKEN:+ [Enter = кӯҳна]}: ")
     [ -z "$BOT_TOKEN" ] && BOT_TOKEN=$EXISTING_TOKEN
