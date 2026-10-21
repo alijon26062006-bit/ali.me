@@ -123,26 +123,40 @@ else
   fi
   cat > "$APP/start-tunnel.sh" <<'SH'
 #!/usr/bin/env bash
-# Starts a quick Cloudflare tunnel, waits for its https URL, then runs the bot with WEBAPP_URL set.
+# Starts a quick Cloudflare tunnel, waits for its https URL, runs the bot with WEBAPP_URL set, and watches both:
+# if the tunnel dies or its URL stops answering, everything exits and systemd restarts it with a fresh URL.
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$DIR/tunnel.log"
 : > "$LOG"
 PORT=$(grep -E '^WEB_PORT=' "$DIR/.env" | cut -d= -f2-)
-cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:${PORT:-8080}" >"$LOG" 2>&1 &
+cloudflared tunnel --no-autoupdate --protocol http2 --url "http://127.0.0.1:${PORT:-8080}" >"$LOG" 2>&1 &
 TUNNEL=$!
-trap 'kill $TUNNEL 2>/dev/null' EXIT
+BOT=""
+cleanup() { kill $TUNNEL $BOT 2>/dev/null; }  # systemd stops anything left in the service group
+trap cleanup EXIT
 URL=""
 for _ in $(seq 1 60); do
   URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG" | head -1)
   [ -n "$URL" ] && break
+  kill -0 $TUNNEL 2>/dev/null || break
   sleep 1
 done
 [ -n "$URL" ] || { echo "Tunnel did not start"; cat "$LOG"; exit 1; }
 echo "Mini App URL: $URL"
 echo "$URL" > "$DIR/webapp_url.txt"
 export WEBAPP_URL="$URL"
-"$DIR/venv/bin/python" "$DIR/run.py"
+"$DIR/venv/bin/python" "$DIR/run.py" &
+BOT=$!
+sleep 30  # give the new hostname time to become reachable
+FAILS=0
+while kill -0 $TUNNEL 2>/dev/null && kill -0 $BOT 2>/dev/null; do
+  if curl -fsS -m 15 -o /dev/null "$URL/"; then FAILS=0; else FAILS=$((FAILS + 1)); fi
+  if [ "$FAILS" -ge 3 ]; then echo "Tunnel URL is not answering — restarting"; exit 1; fi
+  sleep 60
+done
+echo "Tunnel or bot stopped — restarting"
+exit 1
 SH
   chmod +x "$APP/start-tunnel.sh"
   START_CMD="$APP/start-tunnel.sh"
