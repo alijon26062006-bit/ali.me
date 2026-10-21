@@ -47,9 +47,11 @@ def donate_menu(lang: str) -> InlineKeyboardMarkup:
             rows.append([InlineKeyboardButton(text=f"💎 {cat['title']}", callback_data=f"sc:{cat['id']}")])
     for group, icon, tj, ru in GROUP_BUTTONS:
         count = sum(1 for c in CATEGORIES if c["group"] == group)
-        rows.append([InlineKeyboardButton(text=f"{icon} {ru if lang == 'ru' else tj} ({count})",
-                                          callback_data=f"sg:{group}")])
-    rows.append([InlineKeyboardButton(text="✈️ Telegram", callback_data="sc:telegram")])
+        if count:
+            rows.append([InlineKeyboardButton(text=f"{icon} {ru if lang == 'ru' else tj} ({count})",
+                                              callback_data=f"sg:{group}")])
+    if any(c["id"] == "telegram" for c in CATEGORIES):
+        rows.append([InlineKeyboardButton(text="✈️ Telegram", callback_data="sc:telegram")])
     rows.append([InlineKeyboardButton(text=f"🏠 {t(lang, 'btn_home')}", callback_data="m:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

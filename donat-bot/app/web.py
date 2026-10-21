@@ -13,10 +13,11 @@ from aiogram import Bot
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 
-from .catalog import GROUPS, get_catalog
+from .catalog import GROUPS, get_catalog, get_product
 from .config import BASE_DIR, config
 from .db import db, order_code, topup_code
-from .services import ShopError, create_order, create_topup, level_info
+from .services import ShopError, check_supplier_order, clean_fields, create_order, create_topup, level_info
+from .supplier import supplier
 
 log = logging.getLogger(__name__)
 WEBAPP_DIR = BASE_DIR / "webapp"
@@ -29,7 +30,7 @@ def pin_hash(user_id: int, pin: str) -> str:
 
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
-    if not request.path.startswith("/api/"):
+    if not request.path.startswith("/api/") or request.path == "/api/donatix-hook":
         return await handler(request)
     auth = request.headers.get("Authorization", "")
     tg_user = None
@@ -93,8 +94,9 @@ async def me(request: web.Request):
 
 async def post_order(request: web.Request):
     body = await request.json()
+    fields = body.get("fields") if isinstance(body.get("fields"), dict) else None
     result = await create_order(request.app["bot"], request["user"], body.get("items") or [],
-                                str(body.get("uid", "")), str(body.get("method", "")))
+                                str(body.get("uid", "")), str(body.get("method", "")), fields=fields)
     return web.json_response({"ok": True, **result})
 
 
@@ -106,6 +108,40 @@ async def post_topup(request: web.Request):
         raise ShopError("Маблағ нодуруст")
     result = await create_topup(request.app["bot"], request["user"], amount, str(body.get("method", "")))
     return web.json_response({"ok": True, **result})
+
+
+async def check_account(request: web.Request):
+    """Shows the player's nickname before paying (Donatix /accounts/check)."""
+    body = await request.json()
+    product = await get_product(str(body.get("product_id", "")))
+    fields = body.get("fields") if isinstance(body.get("fields"), dict) else {}
+    if not product or not supplier.enabled or not product.get("sku"):
+        return web.json_response({"supported": False})
+    try:
+        clean = clean_fields([{"field_keys": [f["key"] for f in product["fields"]]}], fields, "")
+    except ShopError:
+        return web.json_response({"supported": True, "valid": False})
+    result = await supplier.check_account(product["sku"], clean)
+    return web.json_response({k: result.get(k) for k in ("supported", "valid", "player_name")})
+
+
+async def donatix_hook(request: web.Request):
+    """Optional webhook (Donatix panel → API): speeds up delivery notifications. Signed with HMAC-SHA256."""
+    secret = os.getenv("DONATIX_WEBHOOK_SECRET", "")
+    body = await request.read()
+    ts = request.headers.get("X-Donatix-Timestamp", "")
+    sig = request.headers.get("X-Donatix-Signature", "")
+    mac = hmac.new(secret.encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
+    if not secret or not hmac.compare_digest(mac, sig):
+        return web.json_response({"ok": False}, status=401)
+    try:
+        ref = str(json.loads(body)["order"]["order_id"])
+    except (ValueError, KeyError, TypeError):
+        return web.json_response({"ok": True})
+    for order in await db.orders_by_status("processing", 200):
+        if f'"{ref}"' in order["items"]:
+            await check_supplier_order(request.app["bot"], order["id"])
+    return web.json_response({"ok": True})
 
 
 async def history(request: web.Request):
@@ -176,6 +212,8 @@ def create_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/order", post_order)
     app.router.add_post("/api/topup", post_topup)
     app.router.add_get("/api/history", history)
+    app.router.add_post("/api/check", check_account)
+    app.router.add_post("/api/donatix-hook", donatix_hook)
     app.router.add_get("/api/notifications", notifications)
     app.router.add_post("/api/notifications/read", notifications_read)
     app.router.add_post("/api/settings", settings)

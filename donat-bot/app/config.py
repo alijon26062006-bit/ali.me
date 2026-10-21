@@ -42,6 +42,9 @@ class Config:
     # Supplier (auto-delivery) API
     supplier_api_url: str = os.getenv("SUPPLIER_API_URL", "").rstrip("/")
     supplier_api_key: str = os.getenv("SUPPLIER_API_KEY", "")
+    owner_code: str = os.getenv("OWNER_CODE", "")  # one-time secret: /start owner_<code> makes you admin
+    usd_rate_env: float = float(os.getenv("USD_RATE", "11.0"))   # somoni per 1 USD (supplier prices are USD)
+    markup_env: float = float(os.getenv("MARKUP_PERCENT", "15"))
     # Values changed by admins in /panel (loaded from the settings table, override .env)
     overrides: dict[str, str] = field(default_factory=dict)
 
@@ -51,6 +54,21 @@ class Config:
             return float(self.overrides.get("rub_rate") or self.rub_rate_env)
         except ValueError:
             return self.rub_rate_env
+
+    def _num(self, key: str, default: float) -> float:
+        try:
+            return float(self.overrides.get(key) or default)
+        except ValueError:
+            return default
+
+    @property
+    def usd_rate(self) -> float:
+        """Admin value wins, then the rate the supplier publishes, then .env."""
+        return self._num("usd_rate", self._num("usd_rate_auto", self.usd_rate_env))
+
+    @property
+    def markup(self) -> float:
+        return self._num("markup", self.markup_env)
 
     @property
     def admin_targets(self) -> list[int]:

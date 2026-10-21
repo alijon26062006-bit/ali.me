@@ -1,6 +1,4 @@
 """Buying inside the chat (without the Mini App): category -> product -> game ID -> payment method."""
-import re
-
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -10,7 +8,8 @@ from ..catalog import GROUPS, get_catalog, get_product
 from ..config import config
 from ..db import db
 from ..keyboards import GROUP_BUTTONS
-from ..services import ShopError, create_order, money
+from ..services import ShopError, clean_fields, create_order, money
+from ..supplier import supplier
 from ..texts import t
 
 router = Router(name="shop")
@@ -33,10 +32,6 @@ def _group_title(group: str, lang: str) -> str:
     return GROUPS.get(group, group)
 
 
-def _valid_uid(cat: dict, uid: str) -> bool:
-    if cat["uid_label"] == "ID-и бозӣ":
-        return bool(re.fullmatch(r"\d{5,15}", uid))
-    return 3 <= len(uid) <= 64
 
 
 @router.callback_query(F.data.startswith("sg:"))
@@ -85,27 +80,51 @@ async def cb_product(call: CallbackQuery, state: FSMContext):
         return await call.answer(t(user["lang"], "shop_expired"), show_alert=True)
     product = cat["products"][int(idx)]
     await state.set_state(Buy.uid)
-    await state.update_data(product_id=product["id"], cat_id=cat_id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[B(text=t(user["lang"], "shop_cancel"), callback_data="sx")]])
-    await call.message.edit_text(t(user["lang"], "shop_ask_uid", product=product["title"], price=money(product["price"]),
-                                   uid_label=cat["uid_label"], placeholder=cat["uid_placeholder"]), reply_markup=kb)
+    await state.update_data(product_id=product["id"], cat_id=cat_id, fields={}, field_i=0)
+    await call.message.edit_text(_ask_text(user["lang"], product, 0), reply_markup=_cancel_kb(user["lang"]))
     await call.answer()
+
+
+def _cancel_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[B(text=t(lang, "shop_cancel"), callback_data="sx")]])
+
+
+def _ask_text(lang: str, product: dict, i: int) -> str:
+    f = product["fields"][i]
+    return t(lang, "shop_ask_uid", product=product["title"], price=money(product["price"]),
+             uid_label=f["label"], placeholder=f["placeholder"])
 
 
 @router.message(Buy.uid, F.text & ~F.text.startswith("/") & ~F.text.endswith("Меню"))
 async def got_uid(message: Message, state: FSMContext):
     user = await _user(message.from_user)
+    lang = user["lang"]
     data = await state.get_data()
     product = await get_product(data.get("product_id", ""))
     cat = next((c for c in await get_catalog() if c["id"] == data.get("cat_id")), None)
     if not product or not cat:
         await state.clear()
-        return await message.answer(t(user["lang"], "shop_expired"))
-    uid = message.text.strip().replace(" ", "")
-    if not _valid_uid(cat, uid):
-        return await message.answer(t(user["lang"], "shop_bad_uid", uid_label=cat["uid_label"]))
-    await state.update_data(uid=uid)
-    lang = user["lang"]
+        return await message.answer(t(lang, "shop_expired"))
+    i = data.get("field_i", 0)
+    field = product["fields"][i]
+    fields = dict(data.get("fields") or {})
+    fields[field["key"]] = message.text.strip()
+    try:  # validate everything typed so far
+        clean = clean_fields([{"field_keys": [f["key"] for f in product["fields"][:i + 1]]}], fields, "")
+    except ShopError:
+        return await message.answer(t(lang, "shop_bad_uid", uid_label=field["label"]))
+    if i + 1 < len(product["fields"]):  # ask the next field (server, zone, …)
+        await state.update_data(fields=clean, field_i=i + 1)
+        return await message.answer(_ask_text(lang, product, i + 1), reply_markup=_cancel_kb(lang))
+
+    nick = ""
+    if supplier.enabled and product.get("sku"):
+        check = await supplier.check_account(product["sku"], clean)
+        if check.get("supported") and not check.get("valid"):
+            await state.update_data(fields={}, field_i=0)
+            return await message.answer(t(lang, "shop_no_account"), reply_markup=_cancel_kb(lang))
+        nick = check.get("player_name") or ""
+    await state.update_data(fields=clean, uid=next(iter(clean.values())))
     rows = []
     if user["balance"] >= product["price"]:
         rows.append([B(text=t(lang, "shop_from_balance", balance=money(user["balance"])), callback_data="sm:balance",
@@ -116,9 +135,13 @@ async def got_uid(message: Message, state: FSMContext):
         return await message.answer(t(lang, "no_methods"))
     rows.append([B(text=t(lang, "shop_change_uid"), callback_data=f"sp:{cat['id']}:{_index(cat, product['id'])}"),
                  B(text=t(lang, "shop_cancel"), callback_data="sx")])
-    await message.answer(t(lang, "shop_confirm", cat=cat["title"], product=product["title"], uid_label=cat["uid_label"],
-                           uid=uid, price=money(product["price"]), balance=money(user["balance"])),
-                         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    shown = "\n".join(f"{f['label']}: {clean[f['key']]}" for f in product["fields"][1:])
+    text = t(lang, "shop_confirm", cat=cat["title"], product=product["title"], uid_label=product["fields"][0]["label"],
+             uid=next(iter(clean.values())) + (f"\n{shown}" if shown else ""), price=money(product["price"]),
+             balance=money(user["balance"]))
+    if nick:
+        text = text.replace("\n💰", f"\n{t(lang, 'shop_nick', name=nick)}\n💰", 1)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 def _index(cat: dict, product_id: str) -> int:
@@ -133,7 +156,8 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, bot: Bot):
         return await call.answer(t(user["lang"], "shop_expired"), show_alert=True)
     method = call.data[3:]
     try:
-        result = await create_order(bot, user, [{"product_id": data["product_id"]}], data["uid"], method)
+        result = await create_order(bot, user, [{"product_id": data["product_id"]}], data["uid"], method,
+                                    fields=data.get("fields"))
     except ShopError as e:
         return await call.answer(str(e), show_alert=True)
     await state.clear()

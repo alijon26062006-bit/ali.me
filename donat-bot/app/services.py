@@ -1,6 +1,7 @@
 """Business logic shared by the bot handlers and the Mini App API."""
 import asyncio
 import json
+import re
 import logging
 
 from aiogram import Bot
@@ -9,7 +10,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from .catalog import CATEGORY_BY_ID, get_product
 from .config import config
 from .db import db, order_code, topup_code
-from .supplier import supplier
+from .supplier import WRONG_ACCOUNT_CODES, supplier
 from .texts import t
 
 log = logging.getLogger(__name__)
@@ -88,9 +89,12 @@ async def build_items(raw_items: list[dict]) -> tuple[list[dict], float, str]:
         qty = max(1, min(int(raw.get("qty", 1)), 50))
         if not product:
             raise ShopError("Маҳсулот ёфт нашуд ё дастрас нест")
-        category = category or product["category"]
-        items.append({"product_id": product["id"], "title": product["title"], "sku": product["sku"],
-                      "price": product["price"], "qty": qty})
+        if category and product["category"] != category:
+            raise ShopError("Маҳсулот бояд аз як бозӣ бошанд")
+        category = product["category"]
+        items.append({"product_id": product["id"], "title": product["title"], "sku": product.get("sku", ""),
+                      "dx_quantity": product.get("dx_quantity"), "price": product["price"], "qty": qty,
+                      "field_keys": [f["key"] for f in product.get("fields", [])]})
         total += product["price"] * qty
     title = ", ".join(f"{i['title']}" + (f" ×{i['qty']}" if i["qty"] > 1 else "") for i in items)
     cat = CATEGORY_BY_ID.get(category)
@@ -99,16 +103,40 @@ async def build_items(raw_items: list[dict]) -> tuple[list[dict], float, str]:
     return items, round(total, 2), title
 
 
-async def create_order(bot: Bot, user: dict, raw_items: list[dict], game_uid: str, method: str) -> dict:
+def clean_fields(items: list[dict], fields: dict | None, game_uid: str) -> dict:
+    """Validates what the customer typed against the fields the products need."""
+    keys = items[0]["field_keys"] or ["player_id"]
+    fields = {k: str(v).strip() for k, v in (fields or {}).items() if k in keys}
+    if keys[0] not in fields and game_uid:
+        fields[keys[0]] = game_uid.strip()
+    for k in keys:
+        v = fields.get(k, "")
+        if k == "telegram_username":
+            v = "@" + v.lstrip("@")
+            ok = re.fullmatch(r"@[A-Za-z0-9_]{4,32}", v)
+        elif k == "player_id":
+            v = v.replace(" ", "")
+            ok = re.fullmatch(r"[A-Za-z0-9_-]{3,32}", v)
+        else:
+            ok = 1 <= len(v) <= 64
+        if not ok:
+            raise ShopError("ID-и бозиро дуруст ворид кунед" if k == "player_id" else f"{k}: нодуруст")
+        fields[k] = v
+    return fields
+
+
+async def create_order(bot: Bot, user: dict, raw_items: list[dict], game_uid: str, method: str,
+                       fields: dict | None = None) -> dict:
     if user.get("banned"):
         raise ShopError("⛔")
-    game_uid = (game_uid or "").strip()
-    if not 3 <= len(game_uid) <= 64:
-        raise ShopError("ID-и бозиро дуруст ворид кунед")
     items, total, title = await build_items(raw_items)
+    fields = clean_fields(items, fields, game_uid)
+    game_uid = next(iter(fields.values()))
+    for item in items:
+        item.pop("field_keys", None)
 
     if method == "balance":
-        order_id = await db.create_order(user["id"], items, title, total, game_uid, "balance", "unpaid")
+        order_id = await db.create_order(user["id"], items, title, total, game_uid, "balance", "unpaid", fields)
         if not await db.change_balance(user["id"], -total, "purchase", order_code(order_id)):
             await db.set_order_status(order_id, "cancelled", note="insufficient balance")
             raise ShopError("Баланс нокифоя аст")
@@ -119,7 +147,7 @@ async def create_order(bot: Bot, user: dict, raw_items: list[dict], game_uid: st
     pm = config.method(method)
     if not pm:
         raise ShopError("Тарзи пардохт нодуруст")
-    order_id = await db.create_order(user["id"], items, title, total, game_uid, method, "unpaid")
+    order_id = await db.create_order(user["id"], items, title, total, game_uid, method, "unpaid", fields)
     topup = await create_topup(bot, user, total, method, order_id=order_id)
     return {"order": order_code(order_id), "topup": topup["code"], "status": "unpaid", "amount": topup["amount"]}
 
@@ -137,7 +165,17 @@ async def pay_order_from_balance(bot: Bot, order_id: int) -> bool:
     return True
 
 
+def order_fields(order: dict) -> dict:
+    try:
+        fields = json.loads(order.get("fields") or "{}")
+    except ValueError:
+        fields = {}
+    return fields or {"player_id": order["game_uid"]}
+
+
 async def start_fulfillment(bot: Bot, order_id: int, notify: bool = True):
+    """Sends every unit of every item to the supplier. Units already accepted (ref saved) are not re-sent,
+    so the admin 'retry' button only orders what is missing."""
     order = await db.get_order(order_id)
     if not order or order["status"] != "processing":
         return
@@ -146,31 +184,77 @@ async def start_fulfillment(bot: Bot, order_id: int, notify: bool = True):
     if notify:
         await notify_user(bot, order["user_id"], "order_processing", code=code, title=order["title"],
                           uid=order["game_uid"])
-
-    results = []
+    fields = order_fields(order)
+    errors = []
     for item in items:
-        results.append(await supplier.deliver(item["sku"], order["game_uid"], item["qty"], code))
+        refs = item.setdefault("refs", [])
+        for _ in range(item["qty"] - len(refs)):
+            r = await supplier.deliver(item.get("sku", ""), fields, item.get("dx_quantity"), code)
+            if r.status in ("done", "pending") and r.ref:
+                refs.append(r.ref)
+                if r.delivery:
+                    item.setdefault("delivery", []).extend(r.delivery)
+            else:
+                errors.append(r)
+                break
+        await db.update_order_items(order_id, items)
 
-    refs = ",".join(r.ref for r in results if r.ref)
-    if results and all(r.status == "done" for r in results):
-        await db.set_order_status(order_id, "processing", supplier_ref=refs)
-        await complete_order(bot, order_id)
+    if not errors:
+        await db.set_order_status(order_id, "processing", note="pending at supplier")
+        await check_supplier_order(bot, order_id)
         return
-    if all(r.status in ("done", "pending") for r in results):
-        await db.set_order_status(order_id, "processing", supplier_ref=refs, note="pending at supplier")
-        return  # supplier_poller will finish it
 
-    reason = "; ".join(r.message for r in results if r.status in ("failed", "manual") and r.message)
-    await db.set_order_status(order_id, "processing", supplier_ref=refs or None, note=reason[:300])
+    nothing_sent = not any(item.get("refs") for item in items)
+    wrong_account = any(e.code in WRONG_ACCOUNT_CODES for e in errors)
+    if nothing_sent and wrong_account:  # customer's typo: give the money back right away
+        await db.set_order_status(order_id, "processing", note="wrong account")
+        if await refund_order(bot, order_id, notify=False):
+            await notify_user(bot, order["user_id"], "order_wrong_account", code=code, uid=order["game_uid"])
+        return
+
+    reason = "; ".join(e.message for e in errors if e.message)
+    await db.set_order_status(order_id, "processing", note=reason[:300])
     user = await db.get_user(order["user_id"])
+    head = "🛍 <b>Фармоиш барои иҷрои дастӣ</b>"
+    if any(e.code == "insufficient_balance" for e in errors):
+        head = "💸 <b>Баланси Donatix кам аст!</b> Пур кунед ва «🔁 API»-ро пахш кунед."
     await notify_admins(
         bot,
-        f"🛍 <b>Фармоиш барои иҷрои дастӣ</b> <code>{code}</code>\n\n"
-        f"👤 {user_link(user)}\n📦 {order['title']}\n🎮 ID: <code>{order['game_uid']}</code>\n"
-        f"💰 {money(order['amount'])}\n"
-        + (f"\n⚠️ {reason}" if reason and supplier.enabled else ""),
+        f"{head} <code>{code}</code>\n\n👤 {user_link(user)}\n📦 {order['title']}\n"
+        f"🎮 {', '.join(f'{k}: <code>{v}</code>' for k, v in fields.items())}\n💰 {money(order['amount'])}"
+        + (f"\n\n⚠️ {reason}" if reason and supplier.enabled else ""),
         admin_order_kb(order_id),
     )
+
+
+async def check_supplier_order(bot: Bot, order_id: int):
+    """Asks the supplier about every unit of a processing order; completes it when all are delivered."""
+    order = await db.get_order(order_id)
+    if not order or order["status"] != "processing":
+        return
+    items = json.loads(order["items"])
+    if not all(len(i.get("refs", [])) >= i["qty"] for i in items):
+        return
+    failed, pending, codes = [], False, []
+    for item in items:
+        for ref in list(item["refs"]):
+            r = await supplier.check(ref)
+            if r.status == "failed":
+                failed.append(f"{item['title']}: {r.message or 'failed'}")
+                item["refs"].remove(ref)  # money is back on the Donatix balance; retry orders it again
+            elif r.status == "pending":
+                pending = True
+            elif r.delivery:
+                codes += [str(c) for c in r.delivery]
+    await db.update_order_items(order_id, items)
+    if failed:
+        await db.set_order_status(order_id, "processing", note="supplier failed")
+        user = await db.get_user(order["user_id"])
+        await notify_admins(bot, f"⚠️ Donatix фармоиши <code>{order_code(order_id)}</code>-ро иҷро накард\n"
+                                 f"👤 {user_link(user)}\n📦 {order['title']}\n🎮 <code>{order['game_uid']}</code>\n\n"
+                                 + "\n".join(failed), admin_order_kb(order_id))
+    elif not pending:
+        await complete_order(bot, order_id, codes)
 
 
 def admin_order_kb(order_id: int) -> InlineKeyboardMarkup:
@@ -181,13 +265,16 @@ def admin_order_kb(order_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
-async def complete_order(bot: Bot, order_id: int) -> bool:
-    if not await db.set_order_status(order_id, "done", only_from="processing"):
+async def complete_order(bot: Bot, order_id: int, codes: list[str] | None = None) -> bool:
+    if not await db.set_order_status(order_id, "done", only_from="processing", note=""):
         return False
     order = await db.get_order(order_id)
     await db.add_spent(order["user_id"], order["amount"])
     await notify_user(bot, order["user_id"], "order_done", code=order_code(order_id),
                       title=order["title"], uid=order["game_uid"])
+    if codes:  # gift cards / keys
+        await notify_user(bot, order["user_id"], "order_codes",
+                          codes="\n".join(f"<code>{c}</code>" for c in codes[:50]))
     user = await db.get_user(order["user_id"])
     if user and user["ref_by"] and config.referral_percent > 0:
         bonus = round(order["amount"] * config.referral_percent / 100, 2)
@@ -197,34 +284,27 @@ async def complete_order(bot: Bot, order_id: int) -> bool:
     return True
 
 
-async def refund_order(bot: Bot, order_id: int) -> bool:
+async def refund_order(bot: Bot, order_id: int, notify: bool = True) -> bool:
     order = await db.get_order(order_id)
     if not order or not await db.set_order_status(order_id, "cancelled", only_from="processing"):
         return False
     await db.change_balance(order["user_id"], order["amount"], "refund", order_code(order_id))
-    await notify_user(bot, order["user_id"], "order_refunded", code=order_code(order_id), amount=money(order["amount"]))
+    if notify:
+        await notify_user(bot, order["user_id"], "order_refunded", code=order_code(order_id),
+                          amount=money(order["amount"]))
     return True
 
 
 async def supplier_poller(bot: Bot):
-    """Finishes orders that the supplier accepted as 'pending'."""
+    """Finishes orders the supplier accepted as 'processing' (docs: poll every 5-10 s)."""
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(10)
         if not supplier.enabled:
             continue
         try:
             for order in await db.orders_by_status("processing", limit=50):
-                if order["note"] != "pending at supplier" or not order["supplier_ref"]:
-                    continue
-                checks = [await supplier.check(ref) for ref in order["supplier_ref"].split(",")]
-                if all(c.status == "done" for c in checks):
-                    await complete_order(bot, order["id"])
-                elif any(c.status == "failed" for c in checks):
-                    await db.set_order_status(order["id"], "processing", note="supplier failed")
-                    user = await db.get_user(order["user_id"])
-                    await notify_admins(bot, f"⚠️ Таъминкунанда фармоиши <code>{order_code(order['id'])}</code>-ро"
-                                             f" иҷро накард\n👤 {user_link(user)}\n📦 {order['title']}\n"
-                                             f"🎮 <code>{order['game_uid']}</code>", admin_order_kb(order["id"]))
+                if order["note"] == "pending at supplier":
+                    await check_supplier_order(bot, order["id"])
         except Exception:
             log.exception("supplier poller")
 

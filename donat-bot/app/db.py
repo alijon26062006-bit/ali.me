@@ -98,13 +98,16 @@ class DB:
         await self._migrate()
         await self.conn.commit()
         config.overrides.update({r["key"]: r["value"] for r in await self.fetchall("SELECT * FROM settings")})
+        for admin_id in config.overrides.get("admin_ids", "").split(","):  # admins added with the owner link
+            if admin_id.strip().isdigit() and int(admin_id) not in config.admin_ids:
+                config.admin_ids.append(int(admin_id))
 
     async def _migrate(self):
         """Add columns introduced after the first release to existing databases."""
         new_columns = {
             "topups": {"reject_reason": "TEXT", "receipt_unique_id": "TEXT", "reminded": "INTEGER NOT NULL DEFAULT 0",
                        "handled_by": "INTEGER"},
-            "orders": {"handled_by": "INTEGER"},
+            "orders": {"handled_by": "INTEGER", "fields": "TEXT"},
         }
         for table, cols in new_columns.items():
             existing = {r["name"] for r in await self.fetchall(f"PRAGMA table_info({table})")}
@@ -113,6 +116,13 @@ class DB:
                     await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     # ---------- settings ----------
+    async def add_admin(self, user_id: int):
+        if user_id not in config.admin_ids:
+            config.admin_ids.append(user_id)  # routers' admin filters read this same list
+        saved = [x for x in config.overrides.get("admin_ids", "").split(",") if x]
+        if str(user_id) not in saved:
+            await self.set_setting("admin_ids", ",".join(saved + [str(user_id)]))
+
     async def set_setting(self, key: str, value: str):
         await self.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, value)
@@ -185,12 +195,17 @@ class DB:
 
     # ---------- orders ----------
     async def create_order(self, user_id: int, items: list[dict], title: str, amount: float,
-                           game_uid: str, method: str, status: str) -> int:
+                           game_uid: str, method: str, status: str, fields: dict | None = None) -> int:
         t = now()
         return await self.execute(
-            "INSERT INTO orders (user_id, items, title, amount, game_uid, method, status, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
-            user_id, json.dumps(items, ensure_ascii=False), title, round(amount, 2), game_uid, method, status, t, t)
+            "INSERT INTO orders (user_id, items, title, amount, game_uid, method, status, fields, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            user_id, json.dumps(items, ensure_ascii=False), title, round(amount, 2), game_uid, method, status,
+            json.dumps(fields or {}, ensure_ascii=False), t, t)
+
+    async def update_order_items(self, order_id: int, items: list[dict]):
+        await self.execute("UPDATE orders SET items=?, updated_at=? WHERE id=?",
+                           json.dumps(items, ensure_ascii=False), now(), order_id)
 
     async def get_order(self, order_id: int) -> dict | None:
         return await self.fetchone("SELECT * FROM orders WHERE id=?", order_id)

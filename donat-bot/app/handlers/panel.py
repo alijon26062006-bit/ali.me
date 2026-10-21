@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from ..catalog import SOURCE, sync_supplier_catalog
 from ..config import config
 from ..db import db, order_code, topup_code
 from ..services import admin_order_kb, any_method, money, receipt_caption, receipt_kb, user_link
@@ -23,6 +24,8 @@ STATUS = {"unpaid": "⏳ интизори пардохт", "processing": "🔄 �
 
 
 class PanelInput(StatesGroup):
+    usd = State()
+    markup = State()
     search = State()
     card = State()
     pay_url = State()
@@ -54,7 +57,9 @@ async def panel_view() -> tuple[str, InlineKeyboardMarkup]:
          B(text=f"📦 Фармоишҳо ({orders})", callback_data="ap:orders")],
         [B(text="🔍 Ҷустуҷӯ", callback_data="ap:search"), B(text="💳 Реквизитҳо", callback_data="ap:pay")],
         [B(text="📢 Рассылка", callback_data="ap:bc"), B(text=f"💱 Қурби рубл: {config.rub_rate}", callback_data="ap:rate")],
-        [B(text="🔄 Навсозӣ", callback_data="ap:main")],
+        [B(text=f"💵 Қурби $: {config.usd_rate:g}", callback_data="ap:usd"),
+         B(text=f"📈 Наценка: {config.markup:g}%", callback_data="ap:markup")],
+        [B(text=f"🛒 Каталог: {SOURCE['name']}", callback_data="ap:sync"), B(text="🔄 Навсозӣ", callback_data="ap:main")],
     )
 
 
@@ -358,6 +363,62 @@ async def got_rate(message: Message, state: FSMContext):
     await state.clear()
     await db.set_setting("rub_rate", str(rate))
     await message.answer(f"✅ Қурби нав: 1 ₽ = {rate} сомонӣ")
+
+
+@router.callback_query(F.data == "ap:usd")
+async def cb_usd(call: CallbackQuery, state: FSMContext):
+    await state.set_state(PanelInput.usd)
+    await call.message.answer(f"💵 Қурби ҳозира: 1 $ = <b>{config.usd_rate:g}</b> сомонӣ (нархи Donatix бо доллар аст).\n"
+                              "Қурби навро нависед, масалан <code>10.95</code>. Барои қурби автоматии Donatix: <code>auto</code>"
+                              + CANCEL_HINT)
+    await call.answer()
+
+
+@router.message(PanelInput.usd, F.text, ~F.text.startswith("/"))
+async def got_usd(message: Message, state: FSMContext):
+    text = message.text.strip().lower()
+    if text == "auto":
+        await db.execute("DELETE FROM settings WHERE key='usd_rate'")
+        config.overrides.pop("usd_rate", None)
+    else:
+        try:
+            rate = float(text.replace(",", "."))
+            assert 5 <= rate <= 30
+        except (ValueError, AssertionError):
+            return await message.answer("Қурб бояд байни 5 ва 30 бошад, масалан 10.95")
+        await db.set_setting("usd_rate", str(rate))
+    await state.clear()
+    await message.answer(f"✅ 1 $ = {config.usd_rate:g} сомонӣ. Нархҳо фавран нав шуданд.")
+
+
+@router.callback_query(F.data == "ap:markup")
+async def cb_markup(call: CallbackQuery, state: FSMContext):
+    await state.set_state(PanelInput.markup)
+    await call.message.answer(f"📈 Наценкаи ҳозира: <b>{config.markup:g}%</b> ба нархи таъминкунанда.\n"
+                              "Наценкаи навро нависед, масалан <code>15</code>" + CANCEL_HINT)
+    await call.answer()
+
+
+@router.message(PanelInput.markup, F.text, ~F.text.startswith("/"))
+async def got_markup(message: Message, state: FSMContext):
+    try:
+        markup = float(message.text.replace(",", ".").replace("%", "").strip())
+        assert 0 <= markup <= 300
+    except (ValueError, AssertionError):
+        return await message.answer("Рақам байни 0 ва 300 нависед, масалан 15")
+    await state.clear()
+    await db.set_setting("markup", str(markup))
+    await message.answer(f"✅ Наценка: {markup:g}%. Нархҳо фавран нав шуданд.")
+
+
+@router.callback_query(F.data == "ap:sync")
+async def cb_sync(call: CallbackQuery):
+    await call.answer("⏳ Навсозии каталог…")
+    try:
+        report = await sync_supplier_catalog()
+    except Exception as e:
+        report = f"❌ {e}"
+    await call.message.answer(f"🛒 Каталог: {report}")
 
 
 @router.callback_query(F.data == "ap:bc")

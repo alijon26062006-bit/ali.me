@@ -23,6 +23,14 @@ async def send_welcome(message: Message, lang: str):
 @router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject, bot: Bot, state: FSMContext):
     await state.clear()
+    if config.owner_code and command.args == f"owner_{config.owner_code}":
+        if config.overrides.get("owner_claimed") and message.from_user.id not in config.admin_ids:
+            return await message.answer("⛔ Ин истинод аллакай истифода шудааст.")
+        await ensure_user(message.from_user)
+        await db.add_admin(message.from_user.id)
+        await db.set_setting("owner_claimed", str(message.from_user.id))
+        return await message.answer("✅ <b>Шумо админи бот шудед!</b>\n\nПанел: /panel\n"
+                                    "Аввал: /panel → 💳 Реквизитҳо — рақами кортҳоро гузоред.")
     ref_by = None
     if command.args and command.args.startswith("ref_") and command.args[4:].isdigit():
         ref_by = int(command.args[4:])

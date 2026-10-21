@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command installer for the donat bot (Ubuntu / Debian).
-#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/quirky-cannon-jv0k4o/donat-bot/install.sh | sudo bash -s -- <BOT_TOKEN> [ADMIN_ID] [DOMAIN]
-# Without arguments it asks for the bot token and admin ID, installs everything and starts the bot as a service.
+#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/quirky-cannon-jv0k4o/donat-bot/install.sh | sudo bash -s -- <BOT_TOKEN> [DONATIX_KEY] [ADMIN_ID] [DOMAIN]
+# Installs everything, starts the bot as a service and prints a one-time link: press START in it to become admin.
 # With a domain it serves the Mini App over HTTPS via Caddy; without one it uses a free
 # temporary Cloudflare tunnel (the https address changes after every restart — fine for testing).
 set -euo pipefail
@@ -19,29 +19,33 @@ ask_secret() { local v; read -r -s -p "$1" v </dev/tty; echo >/dev/tty; v=${v//$
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: ... | sudo bash"; exit 1; }
 
 say "Танзимот / Настройки"
-# Non-interactive: ... | sudo bash -s -- <BOT_TOKEN> [ADMIN_ID] [DOMAIN]
-BOT_TOKEN=${1:-${BOT_TOKEN:-}}
-ADMIN_IDS=${2:-${ADMIN_IDS:-}}
-DOMAIN=${3:-${DOMAIN:-}}
-BOT_TOKEN=${BOT_TOKEN//[[:space:]]/}
-EXISTING_TOKEN=""
-[ -f "$APP/.env" ] && EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$APP/.env" | cut -d= -f2- || true)
-if [ -z "$BOT_TOKEN" ] && [ -n "$EXISTING_TOKEN" ]; then  # update: keep saved token and settings
-  BOT_TOKEN=$EXISTING_TOKEN
-  ADMIN_IDS=${ADMIN_IDS:-$(grep -E '^ADMIN_IDS=' "$APP/.env" | cut -d= -f2- || true)}
-  DOMAIN=${DOMAIN:-$(grep -E '^WEBAPP_URL=https://' "$APP/.env" | sed 's#^WEBAPP_URL=https://##' || true)}
-fi
+# Arguments in any order, recognised by their shape:
+#   123456:ABC…   bot token        dx_live_…  Donatix API key
+#   7418217143    admin ID         shop.tj    domain
+BOT_TOKEN=${BOT_TOKEN:-}; ADMIN_IDS=${ADMIN_IDS:-}; DOMAIN=${DOMAIN:-}; SUPPLIER_KEY=${SUPPLIER_KEY:-}
+for arg in "$@"; do
+  arg=${arg//[[:space:]]/}
+  if [[ "$arg" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]; then BOT_TOKEN=$arg
+  elif [[ "$arg" =~ ^dx_[A-Za-z0-9_]+$ ]]; then SUPPLIER_KEY=$arg
+  elif [[ "$arg" =~ ^[0-9]{5,15}$ ]]; then ADMIN_IDS=$arg
+  elif [[ "$arg" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then DOMAIN=$arg
+  elif [ -n "$arg" ]; then echo "⚠️ Номаълум / Неизвестный аргумент: ${arg:0:12}…"
+  fi
+done
+getenv() { [ -f "$APP/.env" ] && grep -E "^$1=" "$APP/.env" | cut -d= -f2- || true; }
+# update: keep what is already saved on the server
+BOT_TOKEN=${BOT_TOKEN:-$(getenv BOT_TOKEN)}
+SUPPLIER_KEY=${SUPPLIER_KEY:-$(getenv SUPPLIER_API_KEY)}
+DOMAIN=${DOMAIN:-$(getenv WEBAPP_URL | sed -n 's#^https://##p' | grep -v trycloudflare || true)}
 if [ -z "$BOT_TOKEN" ]; then  # interactive fallback
   while [ -z "$BOT_TOKEN" ]; do
-    BOT_TOKEN=$(ask_secret "Токени бот (аз @BotFather)${EXISTING_TOKEN:+ [Enter = кӯҳна]}: ")
-    [ -z "$BOT_TOKEN" ] && BOT_TOKEN=$EXISTING_TOKEN
+    BOT_TOKEN=$(ask_secret "Токени бот (аз @BotFather): ")
     [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "Токен нодуруст / Неверный токен"; BOT_TOKEN=""; }
   done
-  ADMIN_IDS=$(ask "Telegram ID-и админ (ё Enter): ")
-  DOMAIN=$(ask "Домен ё Enter барои тест: ")
 fi
 [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "❌ Токен нодуруст / Неверный токен"; exit 1; }
 echo "✅ Токен қабул шуд / Токен принят"
+[ -n "$SUPPLIER_KEY" ] && echo "✅ Donatix API: ${SUPPLIER_KEY:0:8}…" || echo "ℹ️ Donatix API нест — иҷрои дастӣ / без API — ручная выдача"
 
 say "Насби барномаҳо / Установка пакетов"
 export DEBIAN_FRONTEND=noninteractive
@@ -77,6 +81,15 @@ PY
 }
 set_env BOT_TOKEN "$BOT_TOKEN"
 [ -n "$ADMIN_IDS" ] && set_env ADMIN_IDS "$ADMIN_IDS"
+if [ -n "$SUPPLIER_KEY" ]; then
+  set_env SUPPLIER_API_KEY "$SUPPLIER_KEY"
+  set_env SUPPLIER_API_URL "https://donatix.tj/api/v1"
+fi
+OWNER_CODE=$(getenv OWNER_CODE)
+if [ -z "$OWNER_CODE" ]; then
+  OWNER_CODE=$(python3 -c "import secrets; print(secrets.token_hex(8))")
+  set_env OWNER_CODE "$OWNER_CODE"
+fi
 set_env WEB_HOST "127.0.0.1"
 PORT=$(grep -E '^WEB_PORT=' "$APP/.env" | cut -d= -f2- || true)
 systemctl stop "$SERVICE" 2>/dev/null || true
@@ -156,16 +169,41 @@ systemctl enable "$SERVICE" >/dev/null
 systemctl restart "$SERVICE"
 
 sleep 8
-if systemctl is-active --quiet "$SERVICE"; then
-  say "ТАЙЁР! Бот кор мекунад / ГОТОВО! Бот работает"
-  [ -f "$APP/webapp_url.txt" ] && [ -z "$DOMAIN" ] && echo "Mini App: $(cat "$APP/webapp_url.txt")"
-  echo "Логҳо / Логи:        journalctl -u $SERVICE -f"
-  echo "Аз нав / Перезапуск: systemctl restart $SERVICE"
-  [ -z "$ADMIN_IDS" ] && echo "Админ: ба бот /id нависед ва ҳамин фармонро бо ID такрор кунед / напишите боту /id и повторите команду с ID"
-  echo "Танзимот / Настройки: nano $APP/.env  (рақами кортҳо, дастгирӣ ва ғ.)"
-  echo "Навсозӣ / Обновить:  такрор кардани ҳамин фармон / повторить эту же команду"
-else
+if ! systemctl is-active --quiet "$SERVICE"; then
   say "Хато / Ошибка — логҳо:"
   journalctl -u "$SERVICE" -n 40 --no-pager
   exit 1
 fi
+say "ТАЙЁР! Бот кор мекунад / ГОТОВО! Бот работает"
+[ -f "$APP/webapp_url.txt" ] && [ -z "$DOMAIN" ] && echo "Mini App: $(cat "$APP/webapp_url.txt")"
+
+owner_claimed() {
+  python3 - "$APP/data.db" <<'PY' 2>/dev/null
+import sqlite3, sys
+try:
+    row = sqlite3.connect(sys.argv[1]).execute("SELECT value FROM settings WHERE key='owner_claimed'").fetchone()
+    print(row[0] if row else "")
+except Exception:
+    print("")
+PY
+}
+if [ -z "$ADMIN_IDS" ] && [ -z "$(owner_claimed)" ]; then
+  BOT_USERNAME=$(curl -fsS "https://api.telegram.org/bot$BOT_TOKEN/getMe" | python3 -c "import sys, json; print(json.load(sys.stdin)['result']['username'])" 2>/dev/null || true)
+  LINK="https://t.me/${BOT_USERNAME:-YOUR_BOT}?start=owner_$OWNER_CODE"
+  printf '\n\033[1;36m👉 Ин истинодро кушоед ва START-ро пахш кунед — шумо админ мешавед:\n👉 Откройте ссылку и нажмите START — вы станете админом:\n\n   %s\n\033[0m\n' "$LINK"
+  echo "⏳ Интизорӣ… / Ждём нажатия Start… (Ctrl+C — гузаштан / пропустить)"
+  for _ in $(seq 1 300); do
+    OWNER=$(owner_claimed)
+    if [ -n "$OWNER" ]; then
+      say "✅ Админ сабт шуд / Админ сохранён: $OWNER"
+      echo "Ба бот /panel нависед → 💳 Реквизитҳо — рақами кортҳоро гузоред."
+      break
+    fi
+    sleep 2
+  done
+  [ -z "$(owner_claimed)" ] && echo "Вақт гузашт. Истинод боз ҳам кор мекунад / Время вышло, ссылка всё ещё работает: $LINK"
+fi
+echo
+echo "Логҳо / Логи:        journalctl -u $SERVICE -f"
+echo "Аз нав / Перезапуск: systemctl restart $SERVICE"
+echo "Навсозӣ / Обновить:  такрор кардани ҳамин фармон / повторить эту же команду"

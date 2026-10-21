@@ -266,6 +266,9 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 .field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 17px; padding: 12px 0; }
 .field input::placeholder { color: var(--faint); }
 .field.error { border-color: var(--danger); }
+.nick { display: flex; align-items: center; gap: 6px; font-size: 14px; margin: 8px 4px 0; color: var(--success); }
+.nick svg.i { width: 16px; height: 16px; }
+.nick.muted { color: var(--muted); }
 .err-text { color: var(--danger); font-size: 13px; margin: 6px 4px 0; }
 .ghost-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 42px; padding: 0 14px; border-radius: 12px; font-weight: 700; font-size: 14px;
              color: var(--primary-text); background: var(--primary-soft); border: 1px solid rgba(139, 92, 246, .4); }

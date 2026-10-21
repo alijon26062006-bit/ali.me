@@ -138,7 +138,7 @@
       sniper: "Снайпер", freeLook: "Free Look", fireBtn: "Андозаи тугмаи оташ", dpi: "DPI (тавсия)",
       selected: "Интихоб шуд", shareRef: "Даъват кардан", copyLink: "Нусха", terms: "Шартҳои истифода",
       termsText: "Пардохт пас аз тасдиқи чек ба баланс ворид мешавад. Фармоиш ба ID-е, ки шумо ворид кардед, фиристода мешавад — масъулияти дурустии ID бар дӯши харидор аст. Пас аз иҷро бозгашти пул имконнопазир аст. Агар фармоиш иҷро нашавад, маблағ ба баланс баргардонида мешавад.",
-      noMethods: "Ҳоло тарзи пардохт дастрас нест. Ба дастгирӣ нависед.", cats: "категория", noResults: "Ҳеҷ чиз ёфт нашуд", insufficient: "Баланс нокифоя — бонкро интихоб кунед",
+      checking: "Санҷиши аккаунт…", accountNotFound: "Аккаунт бо ин ID ёфт нашуд", account: "Аккаунт", noMethods: "Ҳоло тарзи пардохт дастрас нест. Ба дастгирӣ нависед.", cats: "категория", noResults: "Ҳеҷ чиз ёфт нашуд", insufficient: "Баланс нокифоя — бонкро интихоб кунед",
     },
     ru: {
       morning: "Доброе утро", day: "Добрый день", evening: "Добрый вечер", night: "Доброй ночи",
@@ -176,7 +176,7 @@
       sniper: "Снайпер", freeLook: "Свободный обзор", fireBtn: "Размер кнопки огня", dpi: "DPI (рекомендация)",
       selected: "Выбрано", shareRef: "Пригласить", copyLink: "Копировать", terms: "Условия использования",
       termsText: "Оплата зачисляется на баланс после проверки чека. Заказ отправляется на указанный вами ID — ответственность за правильность ID несёт покупатель. После выполнения возврат невозможен. Если заказ не выполнен, сумма возвращается на баланс.",
-      noMethods: "Сейчас способы оплаты недоступны. Напишите в поддержку.", cats: "категорий", noResults: "Ничего не найдено", insufficient: "Недостаточно средств — выберите банк",
+      checking: "Проверяем аккаунт…", accountNotFound: "Аккаунт с таким ID не найден", account: "Аккаунт", noMethods: "Сейчас способы оплаты недоступны. Напишите в поддержку.", cats: "категорий", noResults: "Ничего не найдено", insufficient: "Недостаточно средств — выберите банк",
     },
   };
   let LANG = "tj";
@@ -407,15 +407,23 @@
       co.method = S.user.balance >= total ? "balance" : firstBank;
     }
     const title = lines.map(([p, q]) => p.title + (q > 1 ? ` ×${q}` : "")).join(", ");
+    const fields = (lines[0] && lines[0][0].fields && lines[0][0].fields.length) ? lines[0][0].fields
+      : [{ key: "player_id", label: c ? c.uid_label : T("gameId"), placeholder: c ? c.uid_placeholder : "" }];
+    co.fieldDefs = fields;
+    co.fields = co.fields || {};
+    const f0 = fields[0];
+    if (!co.fields[f0.key] && co.uid) co.fields[f0.key] = co.uid;
     return `${topbar(T("checkout"))}
       <div class="summary"><span class="ic">${icon(lines[0] && lines[0][0].art === "coin" ? "coins" : "gem")}</span>
         <span class="grow"><span class="k">${esc(T("product").toUpperCase())}</span><span class="v" style="display:block">${esc(title)}</span></span>
         <span class="amt">${moneyHTML(total)}</span></div>
-      <label class="label" for="uid">${esc(c ? c.uid_label : T("gameId"))}</label>
-      <div class="field" id="uid-field">${icon("hash")}<input id="uid" inputmode="${c && c.uid_label === "ID-и бозӣ" ? "numeric" : "text"}" autocomplete="off"
-        placeholder="${esc(c ? c.uid_placeholder : "")}" value="${esc(co.uid || "")}">
+      <label class="label" for="uid">${esc(f0.label)}</label>
+      <div class="field" id="uid-field">${icon(f0.key === "telegram_username" ? "send" : "hash")}<input id="uid" data-field="${esc(f0.key)}"
+        inputmode="${f0.key === "player_id" ? "numeric" : "text"}" autocomplete="off" placeholder="${esc(f0.placeholder)}" value="${esc(co.fields[f0.key] || "")}">
         <button class="ghost-btn" data-act="paste">${icon("clipboard")}${esc(T("paste"))}</button></div>
-      <div id="uid-err"></div>
+      <div id="uid-err"></div><div id="uid-nick">${nickHTML(co)}</div>
+      ${fields.slice(1).map((f) => `<label class="label" for="f-${esc(f.key)}">${esc(f.label)}</label>
+        <div class="field">${icon("hash")}<input id="f-${esc(f.key)}" data-field="${esc(f.key)}" autocomplete="off" placeholder="${esc(f.placeholder)}" value="${esc(co.fields[f.key] || "")}"></div>`).join("")}
       <span class="label">${esc(T("payMethod"))}</span>
       <button class="select" data-act="choose-method">${methodBadge(co.method)}<span class="grow ellipsis">${esc(methodTitle(co.method))}</span><span class="chev-box">${icon("down")}</span></button>
       ${co.method === "balance" && S.user.balance < total ? `<div class="err-text">${esc(T("insufficient"))}</div>` : ""}
@@ -423,10 +431,44 @@
       <div class="cta-bar"><button class="cta" id="pay-btn" data-act="pay" ${co.agree ? "" : "disabled"}>${icon("card")}${esc(T("pay"))}</button></div>`;
   };
   VIEWS.checkout.after = () => {
-    const input = document.getElementById("uid");
-    if (!input) return;
-    input.addEventListener("input", () => { S.checkout.uid = input.value.trim(); document.getElementById("uid-field").classList.remove("error"); document.getElementById("uid-err").innerHTML = ""; });
+    const co = S.checkout;
+    if (!co || !document.getElementById("uid")) return;
+    document.querySelectorAll("[data-field]").forEach((input) => input.addEventListener("input", () => {
+      co.fields[input.dataset.field] = input.value.trim();
+      co.uid = co.fields[co.fieldDefs[0].key] || "";
+      document.getElementById("uid-field").classList.remove("error");
+      document.getElementById("uid-err").innerHTML = "";
+      scheduleNickCheck();
+    }));
+    if (co.uid && co.nick === undefined) scheduleNickCheck();
   };
+
+  // Player nickname check (supplier /accounts/check) — shows who will receive the donat before paying.
+  function nickHTML(co) {
+    if (!co || co.nick === undefined || co.nick === null) return "";
+    if (co.nick === "...") return `<div class="nick muted">${esc(T("checking"))}</div>`;
+    if (co.nick === false) return `<div class="err-text">${esc(T("accountNotFound"))}</div>`;
+    return co.nick ? `<div class="nick">${icon("check")} ${esc(T("account"))}: <b>${esc(co.nick)}</b></div>` : "";
+  }
+  function scheduleNickCheck() {
+    const co = S.checkout;
+    clearTimeout(scheduleNickCheck.t);
+    co.nick = undefined;
+    const box = document.getElementById("uid-nick");
+    if (box) box.innerHTML = "";
+    if ((co.uid || "").length < 4) return;
+    scheduleNickCheck.t = setTimeout(async () => {
+      const key = JSON.stringify(co.fields);
+      co.nick = "..."; if (box) box.innerHTML = nickHTML(co);
+      try {
+        const r = await api("/check", { product_id: co.items[0].product_id, fields: co.fields });
+        if (JSON.stringify(co.fields) !== key) return;  // the customer kept typing
+        co.nick = !r.supported ? null : (r.valid ? (r.player_name || "") : false);
+      } catch { co.nick = null; }
+      const b = document.getElementById("uid-nick");
+      if (b) b.innerHTML = nickHTML(co);
+    }, 700);
+  }
 
   const BANK_STYLE = {
     alif: ["#fff", "#16a34a", "alif"], dc: ["#fff", "#1d4ed8", "DC"], bank: ["var(--tint-1)", "var(--primary)", "🏦"],
@@ -453,11 +495,14 @@
     const co = S.checkout;
     const c = catById(co.cat);
     const uid = (co.uid || "").trim();
-    const numeric = c && c.uid_label === "ID-и бозӣ";
-    if (uid.length < 3 || (numeric && !/^\d{5,15}$/.test(uid))) {
+    const f0 = co.fieldDefs[0];
+    const okFirst = f0.key === "player_id" ? /^[A-Za-z0-9_-]{3,32}$/.test(uid)
+      : f0.key === "telegram_username" ? /^@?[A-Za-z0-9_]{4,32}$/.test(uid) : uid.length >= 3;
+    const missing = co.fieldDefs.slice(1).find((f) => !(co.fields[f.key] || "").trim());
+    if (!okFirst || co.nick === false || missing) {
       document.getElementById("uid-field").classList.add("error");
-      document.getElementById("uid-err").innerHTML = `<div class="err-text">${esc(T("uidError"))}</div>`;
-      document.getElementById("uid").focus();
+      document.getElementById("uid-err").innerHTML = `<div class="err-text">${esc(co.nick === false ? T("accountNotFound") : missing ? missing.label : T("uidError"))}</div>`;
+      document.getElementById(missing ? "f-" + missing.key : "uid").focus();
       return;
     }
     if (co.method === "balance" && S.user.balance < co.total) { toast(T("insufficient"), true); return; }
@@ -465,7 +510,7 @@
     btn.disabled = true; btn.innerHTML = `<span class="spin"></span>`;
     try {
       const uids = store.get("uids", {}); uids[co.cat] = uid; store.set("uids", uids);
-      const res = await api("/order", { items: co.items, uid, method: co.method });
+      const res = await api("/order", { items: co.items, uid, fields: co.fields, method: co.method });
       haptic("medium");
       S.selected.clear(); S.multi = false;
       await refreshUser();
@@ -764,7 +809,10 @@
         go("#/checkout"); break;
       }
       case "paste": {
-        const put = (txt) => { const v = (txt || "").trim(); if (!v) return; S.checkout.uid = v; render(); };
+        const put = (txt) => {
+          const v = (txt || "").trim(); if (!v) return;
+          S.checkout.uid = v; S.checkout.fields[S.checkout.fieldDefs[0].key] = v; S.checkout.nick = undefined; render();
+        };
         if (tg && tg.readTextFromClipboard && tg.isVersionAtLeast && tg.isVersionAtLeast("6.4")) tg.readTextFromClipboard(put);
         else if (navigator.clipboard && navigator.clipboard.readText) navigator.clipboard.readText().then(put, () => document.getElementById("uid").focus());
         break;
