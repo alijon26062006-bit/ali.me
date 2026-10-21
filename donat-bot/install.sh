@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command installer for the donat bot (Ubuntu / Debian).
-#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/quirky-cannon-jv0k4o/donat-bot/install.sh | sudo bash
-# Asks for the bot token and admin ID, installs everything and starts the bot as a service.
+#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/quirky-cannon-jv0k4o/donat-bot/install.sh | sudo bash -s -- <BOT_TOKEN> [ADMIN_ID] [DOMAIN]
+# Without arguments it asks for the bot token and admin ID, installs everything and starts the bot as a service.
 # With a domain it serves the Mini App over HTTPS via Caddy; without one it uses a free
 # temporary Cloudflare tunnel (the https address changes after every restart — fine for testing).
 set -euo pipefail
@@ -19,22 +19,29 @@ ask_secret() { local v; read -r -s -p "$1" v </dev/tty; echo >/dev/tty; v=${v//$
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: ... | sudo bash"; exit 1; }
 
 say "Танзимот / Настройки"
-EXISTING_TOKEN=""
-[ -f "$APP/.env" ] && EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$APP/.env" | cut -d= -f2- || true)
-BOT_TOKEN=${BOT_TOKEN:-}
-while [ -z "$BOT_TOKEN" ]; do
-  BOT_TOKEN=$(ask_secret "Токени бот (аз @BotFather)${EXISTING_TOKEN:+ [Enter = кӯҳна]}: ")
-  [ -z "$BOT_TOKEN" ] && BOT_TOKEN=$EXISTING_TOKEN
-  [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "Токен нодуруст / Неверный токен"; BOT_TOKEN=""; continue; }
-  echo "✅ Токен қабул шуд / Токен принят"
-done
-ADMIN_IDS=${ADMIN_IDS:-$(ask "Telegram ID-и админ (аз @userinfobot), чанд то бо вергул: ")}
-DOMAIN=${DOMAIN:-$(ask "Домен (масалан shop.example.com) ё Enter барои тест бе домен: ")}
+# Non-interactive: ... | sudo bash -s -- <BOT_TOKEN> [ADMIN_ID] [DOMAIN]
+BOT_TOKEN=${1:-${BOT_TOKEN:-}}
+ADMIN_IDS=${2:-${ADMIN_IDS:-}}
+DOMAIN=${3:-${DOMAIN:-}}
+BOT_TOKEN=${BOT_TOKEN//[[:space:]]/}
+if [ -z "$BOT_TOKEN" ]; then  # interactive fallback
+  EXISTING_TOKEN=""
+  [ -f "$APP/.env" ] && EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$APP/.env" | cut -d= -f2- || true)
+  while [ -z "$BOT_TOKEN" ]; do
+    BOT_TOKEN=$(ask_secret "Токени бот (аз @BotFather)${EXISTING_TOKEN:+ [Enter = кӯҳна]}: ")
+    [ -z "$BOT_TOKEN" ] && BOT_TOKEN=$EXISTING_TOKEN
+    [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "Токен нодуруст / Неверный токен"; BOT_TOKEN=""; }
+  done
+  ADMIN_IDS=$(ask "Telegram ID-и админ (ё Enter): ")
+  DOMAIN=$(ask "Домен ё Enter барои тест: ")
+fi
+[[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "❌ Токен нодуруст / Неверный токен"; exit 1; }
+echo "✅ Токен қабул шуд / Токен принят"
 
 say "Насби барномаҳо / Установка пакетов"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip git curl ca-certificates
+apt-get install -y python3 python3-venv python3-pip git curl ca-certificates iproute2
 
 say "Боргирии код / Загрузка кода"
 if [ -d "$SRC/.git" ]; then
@@ -66,7 +73,14 @@ PY
 set_env BOT_TOKEN "$BOT_TOKEN"
 [ -n "$ADMIN_IDS" ] && set_env ADMIN_IDS "$ADMIN_IDS"
 set_env WEB_HOST "127.0.0.1"
-set_env WEB_PORT "8080"
+PORT=$(grep -E '^WEB_PORT=' "$APP/.env" | cut -d= -f2- || true)
+systemctl stop "$SERVICE" 2>/dev/null || true
+port_busy() { ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
+if [ -z "$PORT" ] || port_busy "$PORT"; then
+  for p in $(seq 8080 8099); do port_busy "$p" || { PORT=$p; break; }; done
+fi
+set_env WEB_PORT "$PORT"
+echo "Порт: $PORT"
 chmod 600 "$APP/.env"
 
 if [ -n "$DOMAIN" ]; then
@@ -78,7 +92,7 @@ if [ -n "$DOMAIN" ]; then
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
     apt-get update -y && apt-get install -y caddy
   fi
-  printf '%s {\n    reverse_proxy 127.0.0.1:8080\n}\n' "$DOMAIN" > /etc/caddy/Caddyfile
+  printf '%s {\n    reverse_proxy 127.0.0.1:%s\n}\n' "$DOMAIN" "$PORT" > /etc/caddy/Caddyfile
   systemctl restart caddy
   START_CMD="$APP/venv/bin/python $APP/run.py"
 else
@@ -96,7 +110,8 @@ set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$DIR/tunnel.log"
 : > "$LOG"
-cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8080 >"$LOG" 2>&1 &
+PORT=$(grep -E '^WEB_PORT=' "$DIR/.env" | cut -d= -f2-)
+cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:${PORT:-8080}" >"$LOG" 2>&1 &
 TUNNEL=$!
 trap 'kill $TUNNEL 2>/dev/null' EXIT
 URL=""
@@ -141,6 +156,7 @@ if systemctl is-active --quiet "$SERVICE"; then
   [ -f "$APP/webapp_url.txt" ] && [ -z "$DOMAIN" ] && echo "Mini App: $(cat "$APP/webapp_url.txt")"
   echo "Логҳо / Логи:        journalctl -u $SERVICE -f"
   echo "Аз нав / Перезапуск: systemctl restart $SERVICE"
+  [ -z "$ADMIN_IDS" ] && echo "Админ: ба бот /id нависед ва ҳамин фармонро бо ID такрор кунед / напишите боту /id и повторите команду с ID"
   echo "Танзимот / Настройки: nano $APP/.env  (рақами кортҳо, дастгирӣ ва ғ.)"
   echo "Навсозӣ / Обновить:  такрор кардани ҳамин фармон / повторить эту же команду"
 else

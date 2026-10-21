@@ -1,5 +1,5 @@
 from aiogram import Bot, F, Router
-from aiogram.filters import CommandObject, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from .. import keyboards as kb
@@ -33,6 +33,11 @@ async def cmd_start(message: Message, command: CommandObject, bot: Bot):
     lang = user["lang"]
     await message.answer(t(lang, "menu_hint"), reply_markup=kb.reply_menu(lang))
     await send_welcome(message, lang)
+
+
+@router.message(Command("id"))
+async def cmd_id(message: Message):
+    await message.answer(f"🆔 Telegram ID: <code>{message.from_user.id}</code>")
 
 
 @router.message(F.text.endswith("Меню"))
