@@ -13,7 +13,8 @@ APP="/opt/donat-src/donat-bot"
 SERVICE="donat-bot"
 
 say() { printf '\n\033[1;33m==> %s\033[0m\n' "$*"; }
-ask() { local v; read -r -p "$1" v </dev/tty; printf '%s' "$v"; }
+ask() { local v; read -r -p "$1" v </dev/tty; v=${v//$'\r'/}; v=${v//[[:space:]]/}; printf '%s' "$v"; }
+ask_secret() { local v; read -r -s -p "$1" v </dev/tty; echo >/dev/tty; v=${v//$'\r'/}; v=${v//[[:space:]]/}; printf '%s' "$v"; }
 
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: ... | sudo bash"; exit 1; }
 
@@ -22,9 +23,10 @@ EXISTING_TOKEN=""
 [ -f "$APP/.env" ] && EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$APP/.env" | cut -d= -f2- || true)
 BOT_TOKEN=${BOT_TOKEN:-}
 while [ -z "$BOT_TOKEN" ]; do
-  BOT_TOKEN=$(ask "Токени бот (аз @BotFather)${EXISTING_TOKEN:+ [Enter = кӯҳна]}: ")
+  BOT_TOKEN=$(ask_secret "Токени бот (аз @BotFather)${EXISTING_TOKEN:+ [Enter = кӯҳна]}: ")
   [ -z "$BOT_TOKEN" ] && BOT_TOKEN=$EXISTING_TOKEN
-  [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "Токен нодуруст / Неверный токен"; BOT_TOKEN=""; }
+  [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "Токен нодуруст / Неверный токен"; BOT_TOKEN=""; continue; }
+  echo "✅ Токен қабул шуд / Токен принят"
 done
 ADMIN_IDS=${ADMIN_IDS:-$(ask "Telegram ID-и админ (аз @userinfobot), чанд то бо вергул: ")}
 DOMAIN=${DOMAIN:-$(ask "Домен (масалан shop.example.com) ё Enter барои тест бе домен: ")}
