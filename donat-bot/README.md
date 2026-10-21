@@ -31,7 +31,19 @@
 - `/admin` — панель и статистика, `/pending`, `/products`, `/setprice`, `/hide`, `/show`, `/balance`,
   `/ban`, `/unban`, `/say`, `/broadcast`.
 
-## Запуск
+## Быстрая установка на сервер (одна команда)
+
+На сервере с Ubuntu/Debian выполните:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/quirky-cannon-jv0k4o/donat-bot/install.sh | sudo bash
+```
+
+Скрипт спросит токен бота, ваш Telegram ID и домен (можно пропустить — тогда для теста включится бесплатный
+временный HTTPS-адрес Cloudflare). Затем установит всё и запустит бота как сервис `donat-bot`.
+Повторный запуск той же команды обновляет бота, сохраняя `.env` и базу.
+
+## Запуск вручную
 
 1. Создайте бота у [@BotFather](https://t.me/BotFather) и получите токен.
 2. Установите Python 3.11+ и зависимости:
