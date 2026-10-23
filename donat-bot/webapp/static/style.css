@@ -26,7 +26,10 @@
   --shadow: 0 10px 30px rgba(5, 5, 20, .45);
   --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --display: "Unbounded", "Inter", system-ui, sans-serif;
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* bottom safe area: the device's, or the one Telegram reports (Bot API 8.0+) */
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px));
+  /* part of the Telegram webview hidden below the screen (set from JS; 0 outside Telegram) */
+  --vp-off: 0px;
   --z-tabbar: 20;
   --z-sheet: 40;
   --z-toast: 50;
@@ -108,8 +111,8 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- layout ---------- */
-.app { padding: 16px 16px calc(110px + var(--safe-bottom)); max-width: 560px; margin: 0 auto; }
-.app.no-tabbar { padding-bottom: calc(120px + var(--safe-bottom)); }
+.app { padding: 16px 16px calc(110px + var(--safe-bottom) + var(--vp-off)); max-width: 560px; margin: 0 auto; }
+.app.no-tabbar { padding-bottom: calc(120px + var(--safe-bottom) + var(--vp-off)); }
 .page-title { text-align: center; font-weight: 700; font-size: 18px; margin: 4px 0 18px; }
 .section-title { display: flex; justify-content: space-between; align-items: baseline; margin: 26px 2px 12px;
                  font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -307,7 +310,7 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 .conv span { color: var(--muted); font-weight: 700; font-size: 14px; }
 .conv .rate { grid-column: 1 / -1; display: block; text-align: center; padding: 10px; font-size: 13px; background: var(--surface-3); color: var(--muted); }
 
-.cta-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); padding: 12px 16px calc(14px + var(--safe-bottom));
+.cta-bar { position: fixed; left: 0; right: 0; bottom: var(--vp-off); z-index: var(--z-tabbar); padding: 12px 16px calc(14px + var(--safe-bottom));
            background: linear-gradient(180deg, transparent, var(--bg) 35%); }
 .cta { width: 100%; max-width: 528px; margin: 0 auto; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 58px;
        border-radius: 18px; font-weight: 800; font-size: 17px; background: var(--primary); color: var(--on-primary); transition: opacity .2s, background .2s; }
@@ -378,7 +381,7 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 .mini-select svg.i { position: absolute; right: 10px; width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
 
 /* ---------- tabbar ---------- */
-.tabbar { position: fixed; left: 16px; right: 16px; bottom: calc(12px + var(--safe-bottom)); z-index: var(--z-tabbar); max-width: 528px; margin: 0 auto;
+.tabbar { position: fixed; left: 16px; right: 16px; bottom: calc(12px + var(--safe-bottom) + var(--vp-off)); z-index: var(--z-tabbar); max-width: 528px; margin: 0 auto;
           display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px; border-radius: 24px;
           background: rgba(21, 21, 43, .92); border: 1px solid var(--border-strong); backdrop-filter: blur(14px); box-shadow: var(--shadow); }
 :root[data-theme="light"] .tabbar { background: rgba(255,255,255,.94); }
@@ -389,7 +392,7 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 .tabbar button.on::before { content: ""; position: absolute; top: -7px; width: 34px; height: 4px; border-radius: 2px; background: var(--primary); box-shadow: 0 0 12px var(--primary); }
 
 /* ---------- sheet / modal ---------- */
-.sheet-wrap { position: fixed; inset: 0; z-index: var(--z-sheet); background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; animation: fade .2s ease; }
+.sheet-wrap { position: fixed; inset: 0 0 var(--vp-off) 0; z-index: var(--z-sheet); background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; animation: fade .2s ease; }
 .sheet { width: 100%; max-width: 560px; max-height: 88vh; overflow: auto; padding: 18px 16px calc(20px + var(--safe-bottom));
          background: var(--bg); border: 1px solid var(--border-strong); border-bottom: 0; border-radius: 26px 26px 0 0; animation: up .25s ease; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
@@ -406,7 +409,7 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 @keyframes fade { from { opacity: 0; } }
 @keyframes up { from { transform: translateY(40px); opacity: .4; } }
 
-.toast { position: fixed; left: 50%; bottom: calc(100px + var(--safe-bottom)); z-index: var(--z-toast); transform: translate(-50%, 20px); opacity: 0;
+.toast { position: fixed; left: 50%; bottom: calc(100px + var(--safe-bottom) + var(--vp-off)); z-index: var(--z-toast); transform: translate(-50%, 20px); opacity: 0;
          max-width: calc(100% - 32px); padding: 12px 18px; border-radius: 14px; background: var(--surface-3); border: 1px solid var(--border-strong);
          font-weight: 600; font-size: 15px; box-shadow: var(--shadow); pointer-events: none; transition: opacity .2s, transform .2s; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }

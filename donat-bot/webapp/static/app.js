@@ -878,6 +878,15 @@
   });
   if (tg) tg.BackButton.onClick(() => (history.length > 1 ? history.back() : go("#/")));
 
+  // On phones Telegram can make the webview taller than the visible part of the screen, so anything pinned
+  // to the bottom (tab bar, pay button, sheets) would sit below the edge. Telegram tells us the visible height
+  // (viewportStableHeight); lift the bottom elements by the hidden part.
+  function syncViewport() {
+    const visible = tg && tg.viewportStableHeight;
+    const hidden = visible ? Math.max(0, Math.round(window.innerHeight - visible)) : 0;
+    document.documentElement.style.setProperty("--vp-off", (hidden < window.innerHeight / 2 ? hidden : 0) + "px");
+  }
+
   async function refreshUser() {
     try { S.user = await api("/me"); } catch { /* keep old */ }
   }
@@ -885,6 +894,9 @@
   // ------------------------------------------------------------------ boot
   async function boot() {
     if (tg) { tg.ready(); tg.expand(); try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch { /* */ } }
+    syncViewport();
+    if (tg) tg.onEvent("viewportChanged", syncViewport);
+    window.addEventListener("resize", syncViewport);
     const splash = document.getElementById("splash");
     const started = Date.now();
     try {
