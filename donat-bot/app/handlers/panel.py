@@ -440,7 +440,7 @@ def _slot_view() -> tuple[str, InlineKeyboardMarkup]:
         cat = CATEGORY_BY_ID.get(slot)
         rows.append([B(text=f"{has} {title}" + ("" if cat else " — ⚠️ нест"), callback_data=f"ap:bs:{slot}")])
     rows.append([BACK])
-    text = ("🖼 <b>Баннерҳои саҳифаи асосӣ</b>\n\n🖼 — расми худ гузошта шуд, ▫️ — расми стандартӣ.\n"
+    text = ("🖼 <b>Баннерҳои саҳифаи асосӣ</b>\n\n🖼 — расми шумо, ▫️ — расми стандартии бот.\n"
             "⚠️ нест — категория худкор ёфт нашуд, онро дастӣ интихоб кунед.")
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 

@@ -101,7 +101,7 @@
   const art = (p) => (ART[p.art] || ART.gem)(p);
   // Pictures from the supplier API (games and packs); drawn artwork is the fallback when there is none
   // or the picture fails to load.
-  const safeImg = (u) => (typeof u === "string" && (/^https?:\/\/[^\s"'<>()]+$/.test(u) || /^\/media\/[\w.-]+(\?v=\d+)?$/.test(u)) ? u : "");
+  const safeImg = (u) => (typeof u === "string" && (/^https?:\/\/[^\s"'<>()]+$/.test(u) || /^\/(media|static\/banners)\/[\w.-]+(\?v=\d+)?$/.test(u)) ? u : "");
   const imgTag = (u, cls, fallback) => `<img class="${cls}" src="${esc(u)}" alt="" loading="lazy" decoding="async"
       onerror="this.outerHTML=this.dataset.fb ? decodeURIComponent(this.dataset.fb) : ''" data-fb="${encodeURIComponent(fallback || "")}">`;
   const productArt = (p) => safeImg(p.image) ? imgTag(p.image, "pimg", art(p)) : art(p);
@@ -355,7 +355,7 @@
     const [c1, c2] = c.colors;
     return `<button class="banner" data-go="#/cat/${c.id}" style="--accent:${c1}" aria-label="${esc(c.title)}">
       ${safeImg(c.banner_image)
-        ? `<span class="bg photo" style="background:linear-gradient(90deg, rgba(8,8,20,.78) 0%, rgba(8,8,20,.35) 45%, transparent 70%), url('${esc(c.banner_image)}') center / cover no-repeat, ${c2}"></span>`
+        ? `<span class="bg photo" style="background:linear-gradient(90deg, rgba(8,8,20,.78) 0%, rgba(8,8,20,.35) 45%, transparent 70%), url('${esc(c.banner_image)}') right center / cover no-repeat, ${c2}"></span>`
         : `<span class="bg ${safeImg(c.image) ? "photo" : ""}" data-mark="${safeImg(c.image) ? "" : esc(c.short)}" style="background:${safeImg(c.image)
         ? `linear-gradient(90deg, ${c2}f2 0%, ${c2}b3 45%, transparent 85%), url('${esc(c.image)}') right center / cover no-repeat, ${c2}`
         : `radial-gradient(circle at 80% 30%, ${c1}aa, transparent 55%), linear-gradient(120deg, ${c2}, #0a0a0c)`}"></span>`}

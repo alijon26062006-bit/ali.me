@@ -11,6 +11,7 @@ import logging
 import math
 import re
 import time
+from pathlib import Path
 
 from .config import config
 from .db import db
@@ -364,6 +365,12 @@ def _priced(p: dict, overrides: dict) -> dict | None:
     return {**p, "price": o["price"] if o and o["price"] is not None else tjs_price(p)}
 
 
+DEFAULT_BANNERS = {  # built-in pictures shipped in webapp/static/banners (an admin upload replaces them)
+    slot: f"/static/banners/{slot}.jpg" for slot in ("ff_cis", "ff_indo", "pubg")
+    if (Path(__file__).resolve().parent.parent / "webapp" / "static" / "banners" / f"{slot}.jpg").exists()
+}
+
+
 async def get_catalog() -> list[dict]:
     """Catalog with prices in somoni, admin price overrides applied and hidden products removed."""
     overrides = await db.price_overrides()
@@ -371,7 +378,7 @@ async def get_catalog() -> list[dict]:
     for cat in CATEGORIES:
         products = [x for x in (_priced(p, overrides) for p in cat["products"]) if x]
         if products:
-            banner = config.overrides.get(f"banner:{cat['id']}", "")
+            banner = config.overrides.get(f"banner:{cat['id']}", "") or DEFAULT_BANNERS.get(cat["id"], "")
             result.append({**cat, "products": products, **({"banner_image": banner} if banner else {})})
     return result
 
