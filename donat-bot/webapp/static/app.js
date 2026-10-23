@@ -425,7 +425,10 @@
     const f0 = fields[0];
     if (!co.fields[f0.key] && co.uid) co.fields[f0.key] = co.uid;
     return `${topbar(T("checkout"))}
-      <div class="summary"><span class="ic">${c && safeImg(c.image) ? imgTag(c.image, "", icon("gem")) : icon(lines[0] && lines[0][0].art === "coin" ? "coins" : "gem")}</span>
+      <div class="summary"><span class="ic">${(() => {
+          const pic = (lines[0] && safeImg(lines[0][0].image)) || (c && safeImg(c.image));  // the pack's own picture first
+          return pic ? imgTag(pic, "", icon("gem")) : icon(lines[0] && lines[0][0].art === "coin" ? "coins" : "gem");
+        })()}</span>
         <span class="grow"><span class="k">${esc(T("product").toUpperCase())}</span><span class="v" style="display:block">${esc(title)}</span></span>
         <span class="amt">${moneyHTML(total)}</span></div>
       <label class="label" for="uid">${esc(f0.label)}</label>

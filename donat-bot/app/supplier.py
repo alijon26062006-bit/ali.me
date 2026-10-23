@@ -6,9 +6,11 @@ admins for manual delivery.
 """
 import asyncio
 import logging
+import os
 import re
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 
 import aiohttp
@@ -28,6 +30,30 @@ class DeliveryResult:
     message: str = ""
     code: str = ""       # supplier error code
     delivery: list = field(default_factory=list)  # codes/keys for gift cards, if any
+
+
+class RateLimiter:
+    """At most `per_minute` calls in any 60 s window; extra callers wait their turn (FIFO)."""
+
+    def __init__(self, per_minute: int):
+        self.per_minute = max(1, per_minute)
+        self.calls: deque[float] = deque()
+        self.lock = asyncio.Lock()
+
+    def waiting_seconds(self) -> float:
+        now = time.monotonic()
+        while self.calls and now - self.calls[0] >= 60:
+            self.calls.popleft()
+        return 0 if len(self.calls) < self.per_minute else 60 - (now - self.calls[0]) + 0.05
+
+    async def acquire(self, max_wait: float | None = None) -> bool:
+        async with self.lock:
+            while (wait := self.waiting_seconds()) > 0:
+                if max_wait is not None and wait > max_wait:
+                    return False
+                await asyncio.sleep(wait)
+            self.calls.append(time.monotonic())
+            return True
 
 
 class SupplierError(Exception):
@@ -62,6 +88,9 @@ class ManualSupplier:
     async def balance(self) -> str:
         return "—"
 
+    async def balance_usd(self) -> float | None:
+        return None
+
 
 class DonatixSupplier:
     enabled = True
@@ -72,6 +101,10 @@ class DonatixSupplier:
         self.api_key = api_key
         self._session: aiohttp.ClientSession | None = None
         self._account_cache: dict[tuple, tuple[float, dict]] = {}
+        # Donatix limits per key: 60 orders, 120 status checks, 60 account checks a minute — keep a margin.
+        self.order_limit = RateLimiter(int(os.getenv("SUPPLIER_ORDERS_PER_MIN", "50")))
+        self.status_limit = RateLimiter(int(os.getenv("SUPPLIER_STATUS_PER_MIN", "100")))
+        self.account_limit = RateLimiter(int(os.getenv("SUPPLIER_ACCOUNT_PER_MIN", "50")))
 
     async def _http(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -159,6 +192,7 @@ class DonatixSupplier:
         body = {"product_id": sku, "fields": fields}
         if quantity:
             body["quantity"] = quantity
+        await self.order_limit.acquire()  # over the limit the order simply waits its turn
         try:
             data = await self.request("POST", "/orders", json=body,
                                       idempotency_key=f"{order_code}-{sku}-{uuid.uuid4().hex[:12]}")
@@ -171,6 +205,7 @@ class DonatixSupplier:
             return DeliveryResult("failed", message=f"network: {str(e)[:200]}", code="network")
 
     async def check(self, ref: str) -> DeliveryResult:
+        await self.status_limit.acquire()
         try:
             data = await self.request("GET", f"/orders/{ref}")
             return self._parse(data.get("order") or {})
@@ -187,6 +222,8 @@ class DonatixSupplier:
         cached = self._account_cache.get(key)
         if cached and cached[0] > time.time():
             return cached[1]
+        if not await self.account_limit.acquire(max_wait=3):  # busy: skip the nickname, don't block the buyer
+            return {"supported": False}
         try:
             data = await self.request("POST", "/accounts/check", json={"product_id": sku, "fields": fields})
             result = {"supported": bool(data.get("supported", True)), "valid": bool(data.get("valid", True)),
@@ -200,6 +237,14 @@ class DonatixSupplier:
             return {"supported": False, "error": str(e)[:200]}
         self._account_cache[key] = (time.time() + 600, result)
         return result
+
+    async def balance_usd(self) -> float | None:
+        try:
+            data = await self.request("GET", "/balance")
+            return float(data.get("balance", 0))
+        except Exception as e:
+            log.warning("balance: %s", e)
+            return None
 
     async def balance(self) -> str:
         try:

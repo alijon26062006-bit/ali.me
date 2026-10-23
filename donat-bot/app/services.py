@@ -7,7 +7,7 @@ import logging
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .catalog import CATEGORY_BY_ID, get_product
+from .catalog import CATEGORY_BY_ID, PRODUCTS, get_product
 from .config import config
 from .db import db, order_code, topup_code
 from .supplier import WRONG_ACCOUNT_CODES, supplier
@@ -141,7 +141,7 @@ async def create_order(bot: Bot, user: dict, raw_items: list[dict], game_uid: st
             await db.set_order_status(order_id, "cancelled", note="insufficient balance")
             raise ShopError("Баланс нокифоя аст")
         await db.set_order_status(order_id, "processing", only_from="unpaid")
-        asyncio.create_task(start_fulfillment(bot, order_id))
+        await queue_order(bot, order_id)
         return {"order": order_code(order_id), "status": "processing"}
 
     pm = config.method(method)
@@ -161,7 +161,7 @@ async def pay_order_from_balance(bot: Bot, order_id: int) -> bool:
     if not await db.set_order_status(order_id, "processing", only_from="unpaid"):
         await db.change_balance(order["user_id"], order["amount"], "refund", order_code(order_id))
         return False
-    asyncio.create_task(start_fulfillment(bot, order_id))
+    await queue_order(bot, order_id)
     return True
 
 
@@ -171,6 +171,95 @@ def order_fields(order: dict) -> dict:
     except ValueError:
         fields = {}
     return fields or {"player_id": order["game_uid"]}
+
+
+# ---------------------------------------------------------------- delivery queue
+# Paid orders go into a queue; a few workers send them to the supplier, whose rate limiter keeps us under
+# its per-minute limit (extra orders just wait). Orders the supplier refused for lack of balance wait in
+# the DB with note "waiting balance" until balance_watcher sees enough money and queues them again.
+DELIVERY_QUEUE: asyncio.Queue[int] = asyncio.Queue()
+QUEUED_NOTE = "queued"
+WAITING_BALANCE_NOTE = "waiting balance"
+_low_balance_alerted = False
+
+
+async def queue_order(bot: Bot, order_id: int, notify: bool = True):
+    order = await db.get_order(order_id)
+    if not order or order["status"] != "processing":
+        return
+    await db.set_order_status(order_id, "processing", note=QUEUED_NOTE)
+    if notify:
+        await notify_user(bot, order["user_id"], "order_processing", code=order_code(order_id), title=order["title"],
+                          uid=order["game_uid"])
+    DELIVERY_QUEUE.put_nowait(order_id)
+
+
+async def delivery_worker(bot: Bot):
+    while True:
+        order_id = await DELIVERY_QUEUE.get()
+        try:
+            await start_fulfillment(bot, order_id, notify=False)
+        except Exception:
+            log.exception("delivery of order %s", order_id)
+        finally:
+            DELIVERY_QUEUE.task_done()
+
+
+async def requeue_unsent_orders():
+    """After a restart: paid orders that never reached the supplier go back into the queue."""
+    for order in await db.orders_by_status("processing", limit=1000):
+        if order["note"] in (None, "", QUEUED_NOTE):
+            DELIVERY_QUEUE.put_nowait(order["id"])
+
+
+def _remaining_usd(order: dict) -> float:
+    """Supplier cost (USD) of the units of an order not sent yet; 0 if unknown."""
+    total = 0.0
+    for item in json.loads(order["items"]):
+        product = PRODUCTS.get(item["product_id"]) or {}
+        left = item["qty"] - len(item.get("refs", []))
+        total += float(product.get("price_usd") or 0) * max(left, 0)
+    return total
+
+
+async def send_waiting_orders(bot: Bot) -> int:
+    """One pass: queue the orders that wait for supplier balance, oldest first, while the balance covers them."""
+    global _low_balance_alerted
+    waiting = [o for o in reversed(await db.orders_by_status("processing", limit=1000))
+               if o["note"] == WAITING_BALANCE_NOTE]
+    if not waiting:
+        _low_balance_alerted = False
+        return 0
+    balance = await supplier.balance_usd()
+    if balance is None:
+        return 0
+    sent = 0
+    for order in waiting:
+        need = _remaining_usd(order)
+        if balance + 1e-9 < need or (need == 0 and balance <= 0):
+            break  # keep the queue order: a cheaper later order doesn't jump ahead
+        balance -= need
+        await queue_order(bot, order["id"], notify=False)
+        sent += 1
+    if sent:
+        left = len(waiting) - sent
+        await notify_admins(bot, f"✅ Баланси Donatix пур шуд: {sent} фармоиш ба навбат фиристода шуд."
+                                 + (f"\n⏳ Боз {left} фармоиш интизори баланс аст." if left else ""))
+        if not left:
+            _low_balance_alerted = False
+    return sent
+
+
+async def balance_watcher(bot: Bot):
+    """Every minute: send orders that wait for supplier balance as soon as it is topped up."""
+    while True:
+        await asyncio.sleep(60)
+        if not supplier.enabled:
+            continue
+        try:
+            await send_waiting_orders(bot)
+        except Exception:
+            log.exception("balance watcher")
 
 
 async def start_fulfillment(bot: Bot, order_id: int, notify: bool = True):
@@ -212,12 +301,20 @@ async def start_fulfillment(bot: Bot, order_id: int, notify: bool = True):
             await notify_user(bot, order["user_id"], "order_wrong_account", code=code, uid=order["game_uid"])
         return
 
+    if any(e.code == "insufficient_balance" for e in errors):  # not the buyer's problem: wait for top-up
+        global _low_balance_alerted
+        await db.set_order_status(order_id, "processing", note=WAITING_BALANCE_NOTE)
+        if not _low_balance_alerted:
+            _low_balance_alerted = True
+            await notify_admins(bot, "💸 <b>Баланси Donatix кам аст!</b>\n\nФармоишҳо бекор намешаванд — онҳо дар навбат "
+                                     "меистанд ва баъди пур кардани баланс худкор бо тартиб фиристода мешаванд.\n"
+                                     f"Аввалин: <code>{code}</code> · {order['title']}")
+        return
+
     reason = "; ".join(e.message for e in errors if e.message)
     await db.set_order_status(order_id, "processing", note=reason[:300])
     user = await db.get_user(order["user_id"])
     head = "🛍 <b>Фармоиш барои иҷрои дастӣ</b>"
-    if any(e.code == "insufficient_balance" for e in errors):
-        head = "💸 <b>Баланси Donatix кам аст!</b> Пур кунед ва «🔁 API»-ро пахш кунед."
     await notify_admins(
         bot,
         f"{head} <code>{code}</code>\n\n👤 {user_link(user)}\n📦 {order['title']}\n"

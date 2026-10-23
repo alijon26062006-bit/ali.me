@@ -10,7 +10,7 @@ from ..catalog import PRODUCTS
 from ..config import config
 from ..db import db, order_code, topup_code
 from ..services import (REJECT_REASONS, approve_topup, complete_order, money, receipt_kb, refund_order, reject_kb,
-                        reject_topup, start_fulfillment)
+                        reject_topup, queue_order)
 from ..supplier import supplier
 
 router = Router(name="admin")
@@ -270,9 +270,9 @@ async def cb_order(call: CallbackQuery, bot: Bot):
         order = await db.get_order(oid)
         if not order or order["status"] != "processing":
             return await call.answer("Аллакай коркард шудааст", show_alert=True)
-        await call.answer("🔁 Аз нав ба API фиристода шуд")
+        await call.answer("🔁 Ба навбати API гузошта шуд")
         await call.message.edit_reply_markup(reply_markup=None)
-        return await start_fulfillment(bot, oid, notify=False)
+        return await queue_order(bot, oid, notify=False)
     if not ok:
         return await call.answer("Аллакай коркард шудааст", show_alert=True)
     await _mark(call, label)

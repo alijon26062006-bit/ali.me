@@ -11,7 +11,8 @@ from .catalog import catalog_sync_loop, load_cached_supplier_catalog
 from .config import config
 from .db import db
 from .handlers import admin, panel, shop, user
-from .services import receipt_reminder, supplier_poller
+from .services import (balance_watcher, delivery_worker, receipt_reminder, requeue_unsent_orders,
+                       supplier_poller)
 from .web import create_app
 
 
@@ -38,7 +39,10 @@ async def main():
     await web.TCPSite(runner, config.web_host, config.web_port).start()
     logging.info("Mini App server on http://%s:%s", config.web_host, config.web_port)
 
-    tasks = [asyncio.create_task(supplier_poller(bot)), asyncio.create_task(receipt_reminder(bot))]
+    tasks = [asyncio.create_task(supplier_poller(bot)), asyncio.create_task(receipt_reminder(bot)),
+             asyncio.create_task(balance_watcher(bot))]
+    tasks += [asyncio.create_task(delivery_worker(bot)) for _ in range(3)]
+    await requeue_unsent_orders()
     from .supplier import supplier
     if supplier.enabled:
         tasks.append(asyncio.create_task(catalog_sync_loop()))
