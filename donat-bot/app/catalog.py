@@ -222,9 +222,11 @@ def arrange_free_fire(products: list[dict]) -> list[dict]:
             p["tab"] = "levelup"
         if p["kind"].startswith("voucher"):
             p["art"] = "voucher"
-        p["image"] = kind_image(p["kind"]) or p.get("image", "")
+        own = kind_image(f"levelup_{amount(p)}") if p["kind"] == "levelup" else ""  # Level Up 6, 10, 15 …
+        p["image"] = own or kind_image(p["kind"]) or p.get("image", "")
     return sorted(products, key=lambda p: (FF_KIND_ORDER[p["kind"]],
-                                           amount(p) if p["kind"] == "diamond" else 0, p.get("price_usd", p.get("price", 0))))
+                                           amount(p) if p["kind"] in ("diamond", "levelup") else 0,
+                                           p.get("price_usd", p.get("price", 0))))
 
 
 def _art(name: str) -> str:
