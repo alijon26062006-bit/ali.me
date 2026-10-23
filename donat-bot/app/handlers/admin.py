@@ -70,8 +70,15 @@ async def cmd_pending(message: Message):
 @router.message(Command("products"))
 async def cmd_products(message: Message, command: CommandObject):
     q = (command.args or "").lower()
-    found = [p for p in PRODUCTS.values() if q in p["id"] or q in p["title"].lower()][:40]
-    await message.answer("\n".join(f"<code>{p['id']}</code> — {p['title']}" for p in found) or "Ёфт нашуд")
+    found = [p for p in PRODUCTS.values() if q in p["id"].lower() or q in p["title"].lower()][:40]
+    overrides = await db.price_overrides()
+
+    def state(p: dict) -> str:
+        o = overrides.get(p["id"])
+        hidden = (o and not o["active"]) or (p.get("kind") == "other" and not o)
+        return " 🚫" if hidden else ""
+    await message.answer("\n".join(f"<code>{p['id']}</code> — {p['title']}{state(p)}" for p in found)
+                         or "Ёфт нашуд")
 
 
 @router.message(Command("setprice"))

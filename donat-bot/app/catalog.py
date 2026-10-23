@@ -415,6 +415,8 @@ def _priced(p: dict, overrides: dict) -> dict | None:
     o = overrides.get(p["id"])
     if o and not o["active"]:
         return None
+    if p.get("kind") == "other" and not o:  # Free Fire bundles / Evo access: hidden until an admin runs /show <id>
+        return None
     return {**p, "price": o["price"] if o and o["price"] is not None else tjs_price(p)}
 
 
