@@ -180,6 +180,53 @@ def _short(name: str) -> str:
     return ("".join(w[0] for w in words[:2]) if len(words) > 1 else name[:2]).upper()
 
 
+# ---------------------------------------------------------------- Free Fire pack order and pictures
+FF_KIND_ORDER = {"diamond": 0, "voucher_lite": 1, "voucher_week": 2, "voucher_month": 3, "other": 4, "levelup": 5}
+PRODUCTS_DIR = Path(__file__).resolve().parent.parent / "webapp" / "static" / "products"
+
+
+def ff_kind(name: str) -> str:
+    """Diamonds, Lite / weekly / monthly voucher, Level Up or something else — from the pack name."""
+    n = name.lower()
+    if "level" in n:
+        return "levelup"
+    if re.search(r"lite|лайт", n):
+        return "voucher_lite"
+    if re.search(r"week|недел|ҳафта|mingguan", n):
+        return "voucher_week"
+    if re.search(r"month|месяц|месяч|моҳ|bulanan", n):
+        return "voucher_month"
+    if re.search(r"diamond|алмаз|💎", n) or re.fullmatch(r"\s*\d[\d\s]*", n):
+        return "diamond"
+    return "other"
+
+
+def kind_image(kind: str) -> str:
+    """Picture shipped for a pack kind (webapp/static/products/<kind>.jpg), if there is one."""
+    for ext in ("jpg", "png", "webp"):
+        if (PRODUCTS_DIR / f"{kind}.{ext}").exists():
+            return f"/static/products/{kind}.{ext}"
+    return ""
+
+
+def arrange_free_fire(products: list[dict]) -> list[dict]:
+    """Free Fire, every region: diamonds (smallest first), then Lite, weekly, monthly vouchers, then the rest.
+    Shipped pictures for a kind replace the supplier's picture."""
+    def amount(p: dict) -> int:
+        m = re.search(r"\d[\d\s]*", p["title"])
+        return int(re.sub(r"\s", "", m.group())) if m else 0
+
+    for p in products:
+        p["kind"] = ff_kind(f"{p['title']} {p.get('name', '')}")
+        if p["kind"] == "levelup":
+            p["tab"] = "levelup"
+        if p["kind"].startswith("voucher"):
+            p["art"] = "voucher"
+        p["image"] = kind_image(p["kind"]) or p.get("image", "")
+    return sorted(products, key=lambda p: (FF_KIND_ORDER[p["kind"]],
+                                           amount(p) if p["kind"] == "diamond" else 0, p.get("price_usd", p.get("price", 0))))
+
+
 def _art(name: str) -> str:
     n = name.lower()
     if "level" in n:
@@ -268,7 +315,8 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
         for it in items:
             pname = it.get("title") or it.get("name") or it.get("product_id")
             products.append({
-                "id": it["product_id"], "sku": it["product_id"], "title": pname, "subtitle": "",
+                "id": it["product_id"], "sku": it["product_id"], "title": pname, "name": it.get("name") or "",
+                "subtitle": "",
                 "tab": "levelup" if "level" in pname.lower() else "main", "art": _art(f"{name} {pname}"),
                 "price_usd": float(it.get("price_usd") or 0),
                 "image": find_image(it, origin),
@@ -278,7 +326,7 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
         products = [p for p in products if p["price_usd"] > 0]
         if not products:
             continue
-        products.sort(key=lambda p: p["price_usd"])
+        products = arrange_free_fire(products) if is_ff else sorted(products, key=lambda p: p["price_usd"])
         main_title = "Алмазҳо" if is_ff else ("UC" if "pubg" in text else "Маҳсулот")
         tabs = [{"id": "main", "title": main_title, "icon": "gem"}]
         if any(p["tab"] == "levelup" for p in products):
@@ -327,6 +375,11 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
     order = {k: i for i, k in enumerate(FEATURED)}
     cats.sort(key=lambda c: (c["group"] != "featured", order.get(c["id"], 99)))
     return cats
+
+
+for _c in STATIC_CATEGORIES:
+    if _c["id"].startswith("ff_"):
+        _c["products"] = arrange_free_fire(_c["products"])
 
 
 # ---------------------------------------------------------------- active catalog

@@ -101,7 +101,7 @@
   const art = (p) => (ART[p.art] || ART.gem)(p);
   // Pictures from the supplier API (games and packs); drawn artwork is the fallback when there is none
   // or the picture fails to load.
-  const safeImg = (u) => (typeof u === "string" && (/^https?:\/\/[^\s"'<>()]+$/.test(u) || /^\/(media|static\/banners)\/[\w.-]+(\?v=\d+)?$/.test(u)) ? u : "");
+  const safeImg = (u) => (typeof u === "string" && (/^https?:\/\/[^\s"'<>()]+$/.test(u) || /^\/(media|static\/(banners|products))\/[\w.-]+(\?v=\d+)?$/.test(u)) ? u : "");
   const imgTag = (u, cls, fallback) => `<img class="${cls}" src="${esc(u)}" alt="" loading="lazy" decoding="async"
       onerror="this.outerHTML=this.dataset.fb ? decodeURIComponent(this.dataset.fb) : ''" data-fb="${encodeURIComponent(fallback || "")}">`;
   const productArt = (p) => safeImg(p.image) ? imgTag(p.image, "pimg", art(p)) : art(p);
