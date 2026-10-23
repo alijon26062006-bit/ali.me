@@ -209,13 +209,27 @@ def kind_image(kind: str) -> str:
     return ""
 
 
+def amount(p: dict) -> int:
+    """Number in a pack name; bonuses are added up: '300 + 25 UC' -> 325, '1 060 💎' -> 1060."""
+    m = re.search(r"\d[\d ]*(?:\s*\+\s*\d[\d ]*)*", p["title"])
+    return sum(int(re.sub(r"\s", "", x)) for x in m.group().split("+")) if m else 0
+
+
+def arrange_pubg(products: list[dict]) -> list[dict]:
+    """PUBG Mobile: UC packs first (60, 180, 325 …) with their own pictures, then everything else by price."""
+    for p in products:
+        is_uc = re.search(r"\buc\b", f"{p['title']} {p.get('name', '')}".lower()) and amount(p)
+        p["kind"] = "uc" if is_uc else "pubg_other"
+        if is_uc:
+            p["art"] = "coin"
+            p["image"] = kind_image(f"uc_{amount(p)}") or p.get("image", "")
+    return sorted(products, key=lambda p: (p["kind"] != "uc", amount(p) if p["kind"] == "uc" else 0,
+                                           p.get("price_usd", p.get("price", 0))))
+
+
 def arrange_free_fire(products: list[dict]) -> list[dict]:
     """Free Fire, every region: diamonds (smallest first), then Lite, weekly, monthly vouchers, then the rest.
     Shipped pictures for a kind replace the supplier's picture."""
-    def amount(p: dict) -> int:
-        m = re.search(r"\d[\d\s]*", p["title"])
-        return int(re.sub(r"\s", "", m.group())) if m else 0
-
     for p in products:
         p["kind"] = ff_kind(f"{p['title']} {p.get('name', '')}")
         if p["kind"] == "levelup":
@@ -328,7 +342,12 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
         products = [p for p in products if p["price_usd"] > 0]
         if not products:
             continue
-        products = arrange_free_fire(products) if is_ff else sorted(products, key=lambda p: p["price_usd"])
+        if is_ff:
+            products = arrange_free_fire(products)
+        elif "pubg" in text:
+            products = arrange_pubg(products)
+        else:
+            products.sort(key=lambda p: p["price_usd"])
         main_title = "Алмазҳо" if is_ff else ("UC" if "pubg" in text else "Маҳсулот")
         tabs = [{"id": "main", "title": main_title, "icon": "gem"}]
         if any(p["tab"] == "levelup" for p in products):
@@ -382,6 +401,8 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
 for _c in STATIC_CATEGORIES:
     if _c["id"].startswith("ff_"):
         _c["products"] = arrange_free_fire(_c["products"])
+    elif _c["id"] == "pubg":
+        _c["products"] = arrange_pubg(_c["products"])
 
 
 # ---------------------------------------------------------------- active catalog
