@@ -21,6 +21,7 @@ from .supplier import supplier
 
 log = logging.getLogger(__name__)
 WEBAPP_DIR = BASE_DIR / "webapp"
+MEDIA_DIR = BASE_DIR / "media"  # banners uploaded by admins (not in git)
 DEV_USER_ID = int(os.getenv("DEV_USER_ID", "0") or 0)  # local testing without Telegram only
 
 
@@ -220,4 +221,6 @@ def create_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/pin", set_pin)
     app.router.add_post("/api/pin/verify", verify_pin)
     app.router.add_static("/static", WEBAPP_DIR / "static")
+    MEDIA_DIR.mkdir(exist_ok=True)
+    app.router.add_static("/media", MEDIA_DIR)
     return app

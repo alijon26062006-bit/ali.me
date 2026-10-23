@@ -1,5 +1,6 @@
 """/panel — button-driven admin panel: receipts, orders, search, customer card, payment details, rate."""
 import re
+import time
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
@@ -7,10 +8,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from ..catalog import SOURCE, sync_supplier_catalog
+from ..catalog import (CATEGORIES, CATEGORY_BY_ID, FEATURED, FEATURED_TITLES, SOURCE, load_cached_supplier_catalog,
+                       sync_supplier_catalog)
 from ..config import config
 from ..db import db, order_code, topup_code
 from ..services import admin_order_kb, any_method, money, receipt_caption, receipt_kb, user_link
+from ..web import MEDIA_DIR
 from .admin import Broadcast, stats_text
 
 router = Router(name="panel")
@@ -24,6 +27,7 @@ STATUS = {"unpaid": "⏳ интизори пардохт", "processing": "🔄 �
 
 
 class PanelInput(StatesGroup):
+    banner = State()
     usd = State()
     markup = State()
     search = State()
@@ -59,7 +63,8 @@ async def panel_view() -> tuple[str, InlineKeyboardMarkup]:
         [B(text="📢 Рассылка", callback_data="ap:bc"), B(text=f"💱 Қурби рубл: {config.rub_rate}", callback_data="ap:rate")],
         [B(text=f"💵 Қурби $: {config.usd_rate:g}", callback_data="ap:usd"),
          B(text=f"📈 Наценка: {config.markup:g}%", callback_data="ap:markup")],
-        [B(text=f"🛒 Каталог: {SOURCE['name']}", callback_data="ap:sync"), B(text="🔄 Навсозӣ", callback_data="ap:main")],
+        [B(text=f"🛒 Каталог: {SOURCE['name']}", callback_data="ap:sync"), B(text="🖼 Баннерҳо", callback_data="ap:ban")],
+        [B(text="🔄 Навсозӣ", callback_data="ap:main")],
     )
 
 
@@ -419,6 +424,135 @@ async def cb_sync(call: CallbackQuery):
     except Exception as e:
         report = f"❌ {e}"
     await call.message.answer(f"🛒 Каталог: {report}")
+
+
+# ---------------------------------------------------------------- home-screen banners
+BANNER_HINT = ("🖼 Расми баннерро барои <b>{title}</b> фиристед.\n\n"
+               "• Андоза: <b>1600×500</b> (таносуби 16:5), ҷои матн — тарафи чап торик бошад\n"
+               "• Беҳтар ҳамчун <b>файл</b> (📎 → Файл), то сифат паст нашавад\n"
+               "• JPG / PNG / WEBP, то 5 МБ")
+
+
+def _slot_view() -> tuple[str, InlineKeyboardMarkup]:
+    rows = []
+    for slot, title in FEATURED_TITLES.items():
+        has = "🖼" if config.overrides.get(f"banner:{slot}") else "▫️"
+        cat = CATEGORY_BY_ID.get(slot)
+        rows.append([B(text=f"{has} {title}" + ("" if cat else " — ⚠️ нест"), callback_data=f"ap:bs:{slot}")])
+    rows.append([BACK])
+    text = ("🖼 <b>Баннерҳои саҳифаи асосӣ</b>\n\n🖼 — расми худ гузошта шуд, ▫️ — расми стандартӣ.\n"
+            "⚠️ нест — категория худкор ёфт нашуд, онро дастӣ интихоб кунед.")
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "ap:ban")
+async def cb_banners(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text, markup = _slot_view()
+    await call.message.edit_text(text, reply_markup=markup)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:bs:"))
+async def cb_banner_slot(call: CallbackQuery):
+    slot = call.data.split(":")[2]
+    cat = CATEGORY_BY_ID.get(slot)
+    text = (f"🖼 <b>{FEATURED_TITLES.get(slot, slot)}</b>\n\nКатегория: {cat['title'] + ' (' + str(len(cat['products'])) + ' маҳсулот)' if cat else '⚠️ интихоб нашудааст'}\n"
+            f"Расм: {'гузошта шуд' if config.overrides.get(f'banner:{slot}') else 'стандартӣ'}")
+    rows = [[B(text="📤 Расми нав", callback_data=f"ap:bu:{slot}")]]
+    if config.overrides.get(f"banner:{slot}"):
+        rows.append([B(text="🗑 Расмро нест кардан", callback_data=f"ap:bd:{slot}")])
+    if SOURCE["name"].startswith("supplier"):
+        rows.append([B(text="📌 Категорияро интихоб кардан", callback_data=f"ap:bp:{slot}:0")])
+    rows.append([B(text="⬅️ Баннерҳо", callback_data="ap:ban")])
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:bu:"))
+async def cb_banner_upload(call: CallbackQuery, state: FSMContext):
+    slot = call.data.split(":")[2]
+    await state.set_state(PanelInput.banner)
+    await state.update_data(slot=slot)
+    await call.message.answer(BANNER_HINT.format(title=FEATURED_TITLES.get(slot, slot)) + CANCEL_HINT)
+    await call.answer()
+
+
+@router.message(PanelInput.banner, F.photo | F.document)
+async def got_banner(message: Message, state: FSMContext, bot: Bot):
+    if message.document:
+        doc = message.document
+        ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get(doc.mime_type or "")
+        if not ext:
+            return await message.answer("Танҳо JPG, PNG ё WEBP. Боз фиристед:")
+        if (doc.file_size or 0) > 5 * 1024 * 1024:
+            return await message.answer("Файл аз 5 МБ калон аст. Хурдтар фиристед:")
+        file_id = doc.file_id
+    else:
+        ext, file_id = "jpg", message.photo[-1].file_id
+    slot = (await state.get_data())["slot"]
+    await state.clear()
+    MEDIA_DIR.mkdir(exist_ok=True)
+    for old in MEDIA_DIR.glob(f"banner_{slot}.*"):
+        old.unlink()
+    path = MEDIA_DIR / f"banner_{slot}.{ext}"
+    await bot.download(file_id, destination=path)
+    await db.set_setting(f"banner:{slot}", f"/media/{path.name}?v={int(time.time())}")
+    text, markup = _slot_view()
+    await message.answer("✅ Баннер гузошта шуд. Мини-аппро аз нав кушоед.\n\n" + text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("ap:bd:"))
+async def cb_banner_delete(call: CallbackQuery):
+    slot = call.data.split(":")[2]
+    for old in MEDIA_DIR.glob(f"banner_{slot}.*"):
+        old.unlink()
+    await db.execute("DELETE FROM settings WHERE key=?", f"banner:{slot}")
+    config.overrides.pop(f"banner:{slot}", None)
+    text, markup = _slot_view()
+    await call.message.edit_text("🗑 Нест карда шуд.\n\n" + text, reply_markup=markup)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:bp:"))
+async def cb_banner_pick(call: CallbackQuery):
+    """Choose which supplier category sits in a banner slot (when automatic matching guessed wrong)."""
+    _, _, slot, page = call.data.split(":")
+    page = int(page)
+    words = FEATURED[slot][0]
+    cats = [c for c in CATEGORIES if any(w in f"{c.get('raw_id', '')} {c['title']}".lower() for w in words)]
+    chunk = cats[page * 10:(page + 1) * 10]
+    rows = [[B(text=f"{'✅ ' if c['id'] == slot else ''}{c['title']} ({len(c['products'])})",
+               callback_data=f"ap:bk:{slot}:{c.get('raw_id', c['id'])}")] for c in chunk]
+    nav = []
+    if page > 0:
+        nav.append(B(text="◀️", callback_data=f"ap:bp:{slot}:{page - 1}"))
+    if (page + 1) * 10 < len(cats):
+        nav.append(B(text="▶️", callback_data=f"ap:bp:{slot}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([B(text="🔄 Худкор", callback_data=f"ap:bk:{slot}:auto"), B(text="⬅️", callback_data=f"ap:bs:{slot}")])
+    await call.message.edit_text(f"📌 Кадом категория дар баннери <b>{FEATURED_TITLES[slot]}</b> бошад?",
+                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:bk:"))
+async def cb_banner_pin(call: CallbackQuery):
+    _, _, slot, raw_id = call.data.split(":", 3)
+    if raw_id == "auto":
+        await db.execute("DELETE FROM settings WHERE key=?", f"featured:{slot}")
+        config.overrides.pop(f"featured:{slot}", None)
+    else:
+        for other in FEATURED:  # one category can sit in one slot only
+            if config.overrides.get(f"featured:{other}") == raw_id:
+                await db.execute("DELETE FROM settings WHERE key=?", f"featured:{other}")
+                config.overrides.pop(f"featured:{other}", None)
+        await db.set_setting(f"featured:{slot}", raw_id)
+    await load_cached_supplier_catalog()
+    text, markup = _slot_view()
+    await call.message.edit_text("✅ Нигоҳ дошта шуд.\n\n" + text, reply_markup=markup)
+    await call.answer()
 
 
 @router.callback_query(F.data == "ap:bc")

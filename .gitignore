@@ -8,3 +8,4 @@ uploads/
 __pycache__/
 *.db
 venv/
+donat-bot/media/

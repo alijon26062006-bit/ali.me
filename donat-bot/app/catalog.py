@@ -157,11 +157,13 @@ for _c in STATIC_CATEGORIES:
 
 
 # ---------------------------------------------------------------- catalog built from the supplier
-FEATURED = {  # (keyword in category, region keywords) -> look of the home-screen banner
-    "ff_cis": (("free fire", "free_fire", "freefire"), ("cis", "снг", "ru")),
-    "ff_indo": (("free fire", "free_fire", "freefire"), ("indonesia", "id", "индонез")),
+FEATURED = {  # home-screen banner slot -> (keywords of the game, region words); admins can pick another category
+    "ff_cis": (("free fire", "free_fire", "freefire"),
+               ("cis", "снг", "sng", "ru", "rus", "russia", "россия", "рф", "kz", "kazakhstan", "казахстан", "eurasia")),
+    "ff_indo": (("free fire", "free_fire", "freefire"), ("id", "idn", "indo", "indonesia", "индонезия", "индонезии")),
     "pubg": (("pubg",), ()),
 }
+FEATURED_TITLES = {"ff_cis": "Free Fire СНГ", "ff_indo": "Free Fire Индонезия", "pubg": "PUBG Mobile"}
 STATIC_BY_ID = {c["id"]: c for c in STATIC_CATEGORIES}
 PALETTE = ["#2563eb", "#0ea5e9", "#a855f7", "#eab308", "#f59e0b", "#3b82f6", "#facc15", "#64748b", "#ef4444",
            "#22c55e", "#f43f5e", "#6366f1", "#84cc16", "#14b8a6", "#fb923c", "#ec4899"]
@@ -189,9 +191,9 @@ def _art(name: str) -> str:
 
 
 def _featured_key(cat_text: str, region_text: str) -> str | None:
+    words = set(re.findall(r"[a-zа-яё0-9]+", f"{cat_text} {region_text}".lower()))
     for key, (names, regions) in FEATURED.items():
-        if any(n in cat_text for n in names) and (not regions or any(r == region_text or r in region_text.split()
-                                                                       or region_text.startswith(r) for r in regions)):
+        if any(n in cat_text for n in names) and (not regions or words & set(regions)):
             return key
     return None
 
@@ -254,9 +256,11 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
         region_title = first.get("region_title") or region
         title = f"{name} {region_title}".strip() if regions_per_cat[cid] > 1 and region_title else name
         text = f"{cid} {name}".lower()
-        fkey = _featured_key(text, f"{region} {region_title}".lower())
-        if fkey in used_featured:
-            fkey = None
+        raw_id = f"dx_{_slug(cid)}_{_slug(region)}"[:44]
+        pinned = {v: k for k, v in config.overrides.items() if k.startswith("featured:") and v}
+        fkey = pinned[raw_id].split(":", 1)[1] if raw_id in pinned else _featured_key(text, f"{region} {region_title}")
+        if fkey in used_featured or (raw_id not in pinned and config.overrides.get(f"featured:{fkey}")):
+            fkey = None  # slot already taken, or an admin pinned another category to it
         is_ff = any(n in text for n in FEATURED["ff_cis"][0])
         group = "featured" if fkey else ("ff_regions" if is_ff else "games")
         products = []
@@ -280,7 +284,7 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
             tabs.append({"id": "levelup", "title": "Level Up", "icon": "award"})
         look = STATIC_BY_ID.get(fkey, {}) if fkey else {}
         color = PALETTE[idx % len(PALETTE)]
-        cat = {"id": fkey or f"dx_{_slug(cid)}_{_slug(region)}"[:44], "title": look.get("title", title), "group": group,
+        cat = {"id": fkey or raw_id, "raw_id": raw_id, "title": title, "group": group,
                "short": look.get("short") or _short(name), "colors": look.get("colors") or [color, "#111127"],
                "tabs": tabs, "products": products, "uid_label": products[0]["fields"][0]["label"],
                "uid_placeholder": products[0]["fields"][0]["placeholder"],
@@ -288,7 +292,8 @@ def build_supplier_catalog(raw: dict) -> list[dict]:
                or next((p["image"] for p in products if p["image"]), "")}
         if fkey:
             used_featured.add(fkey)
-            cat.update(banner=look.get("banner"), banner_kicker=look.get("banner_kicker"))
+            big = "UC" if fkey == "pubg" else (region_title or region or look.get("banner", "")).upper()
+            cat.update(banner=big, banner_kicker=name.upper())
         cats.append(cat)
 
     tg_products = []
@@ -366,7 +371,8 @@ async def get_catalog() -> list[dict]:
     for cat in CATEGORIES:
         products = [x for x in (_priced(p, overrides) for p in cat["products"]) if x]
         if products:
-            result.append({**cat, "products": products})
+            banner = config.overrides.get(f"banner:{cat['id']}", "")
+            result.append({**cat, "products": products, **({"banner_image": banner} if banner else {})})
     return result
 
 
