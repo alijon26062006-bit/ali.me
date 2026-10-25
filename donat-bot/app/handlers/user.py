@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, Message
 
 from .. import keyboards as kb
 from ..config import config
-from ..db import db, topup_code
+from ..db import db, order_code, topup_code
 from ..services import level_info, money, cancel_topup, submit_receipt, safe_send
 from ..subscription import is_subscribed
 from ..texts import t
@@ -81,9 +81,21 @@ async def cb_profile(call: CallbackQuery, bot: Bot):
     text = t(user["lang"], "profile", id=user["id"], balance=money(user["balance"], user["currency"]),
              orders=orders["c"], level=level_info(user["total_spent"])["title"], ref_pct=f"{config.referral_percent:g}",
              refs=await db.referrals_count(user["id"]), ref_earned=money(user["ref_earned"], user["currency"]),
-             ref_link=f"https://t.me/{me.username}?start=ref_{user['id']}")
+             ref_link=f"https://t.me/{me.username}?start=ref_{user['id']}", recent=await _recent_orders(user))
     await call.message.edit_text(text, reply_markup=kb.back_menu(user["lang"]))
     await call.answer()
+
+
+STATUS_ICON = {"unpaid": "⏳", "processing": "🔄", "done": "✅", "cancelled": "❌"}
+
+
+async def _recent_orders(user: dict) -> str:
+    orders = await db.user_orders(user["id"], 5)
+    if not orders:
+        return ""
+    lines = "\n".join(f"{STATUS_ICON.get(o['status'], '•')} <code>{order_code(o['id'])}</code> · {o['title'][:30]} · "
+                      f"{money(o['amount'], user['currency'])}" for o in orders)
+    return t(user["lang"], "recent_orders", lines=lines)
 
 
 @router.callback_query(F.data == "m:about")

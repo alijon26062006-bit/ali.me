@@ -288,6 +288,18 @@ class DB:
     async def user_topups(self, user_id: int, limit: int = 100) -> list[dict]:
         return await self.fetchall("SELECT * FROM topups WHERE user_id=? ORDER BY id DESC LIMIT ?", user_id, limit)
 
+    async def orders_by_game_uid(self, game_uid: str, limit: int = 10) -> list[dict]:
+        return await self.fetchall("SELECT * FROM orders WHERE game_uid=? ORDER BY id DESC LIMIT ?", game_uid, limit)
+
+    async def receipts_since(self, since: int, status: str | None = None) -> list[dict]:
+        """Requests with a receipt photo updated since `since`, newest first (optionally one status only)."""
+        sql = "SELECT * FROM topups WHERE receipt_file_id IS NOT NULL AND updated_at>=?"
+        args: list = [since]
+        if status:
+            sql += " AND status=?"
+            args.append(status)
+        return await self.fetchall(sql + " ORDER BY id DESC", *args)
+
     async def find_user(self, query: str) -> dict | None:
         q = query.strip().lstrip("@")
         if q.isdigit():

@@ -6,7 +6,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
 
 from ..catalog import (CATEGORIES, CATEGORY_BY_ID, FEATURED, FEATURED_TITLES, SOURCE, load_cached_supplier_catalog,
                        sync_supplier_catalog, tjs_price)
@@ -61,9 +61,10 @@ async def panel_view() -> tuple[str, InlineKeyboardMarkup]:
     orders = len(await db.orders_by_status("processing", 100))
     text = "🛠 <b>Панели админ</b>\n\n" + await stats_text()
     return text, kb(
+        [B(text="🔍 Ҷустуҷӯи фармоиш / чек / муштарӣ", callback_data="ap:search", style="primary")],
         [B(text=f"🧾 Чекҳо ({receipts})", callback_data="ap:receipts"),
          B(text=f"📦 Фармоишҳо ({orders})", callback_data="ap:orders")],
-        [B(text="🔍 Ҷустуҷӯ", callback_data="ap:search"), B(text="💳 Реквизитҳо", callback_data="ap:pay")],
+        [B(text="🗂 Архиви чекҳо (30 рӯз)", callback_data="ap:arch"), B(text="💳 Реквизитҳо", callback_data="ap:pay")],
         [B(text="📢 Рассылка", callback_data="ap:bc"), B(text=f"💱 Қурби рубл: {config.rub_rate}", callback_data="ap:rate")],
         [B(text=f"💵 Қурби $: {config.usd_rate:g}", callback_data="ap:usd"),
          B(text=f"📈 Наценка: {config.markup:g}%", callback_data="ap:markup")],
@@ -163,23 +164,108 @@ async def cb_order(call: CallbackQuery):
 @router.callback_query(F.data == "ap:search")
 async def cb_search(call: CallbackQuery, state: FSMContext):
     await state.set_state(PanelInput.search)
-    await call.message.answer("🔍 Нависед: <code>ORD-1001</code>, <code>TOP-2601</code>, ID-и Telegram ё @username"
+    await call.message.answer("🔍 Нависед яке аз инҳо:\n• рақами фармоиш: <code>ORD-1001</code> ё <code>1001</code>\n"
+                              "• рақами пуркунӣ: <code>TOP-2601</code> ё <code>2601</code>\n• ID-и бозӣ (UID)\n"
+                              "• ID-и Telegram ё @username"
                               + CANCEL_HINT)
     await call.answer()
 
 
 @router.message(PanelInput.search, F.text, ~F.text.startswith("/"))
 async def got_search(message: Message, state: FSMContext):
-    q = message.text.strip().upper()
+    """Finds anything a customer may quote: ORD-1234 / 1234, TOP-2650 / 2650, game ID, Telegram ID, @username."""
+    raw = message.text.strip()
+    q = raw.upper().replace(" ", "")
     await state.clear()
-    if m := re.fullmatch(r"(?:ORD-?)(\d+)", q):
+    if m := re.fullmatch(r"ORD-?(\d+)", q):
         return await send_order(message, int(m.group(1)) - 1000)
-    if m := re.fullmatch(r"(?:TOP-?)(\d+)", q):
+    if m := re.fullmatch(r"TOP-?(\d+)", q):
         return await send_receipt(message, int(m.group(1)) - 2600)
-    user = await db.find_user(message.text)
-    if not user:
-        return await message.answer("Ёфт нашуд. Боз /panel → 🔍")
-    await send_user(message, user["id"])
+    rows = []
+    if q.isdigit():
+        n = int(q)
+        if n > 1000 and (o := await db.get_order(n - 1000)):
+            rows.append([B(text=f"📦 {order_code(o['id'])} · {o['title'][:28]} · {STATUS.get(o['status'], '')}",
+                           callback_data=f"ap:o:{o['id']}")])
+        if n > 2600 and (tp := await db.get_topup(n - 2600)):
+            rows.append([B(text=f"🧾 {topup_code(tp['id'])} · {money(tp['amount'])} · {STATUS.get(tp['status'], '')}",
+                           callback_data=f"ap:r:{tp['id']}")])
+    for o in await db.orders_by_game_uid(raw.replace(" ", "")):
+        rows.append([B(text=f"🎮 {order_code(o['id'])} · ID {o['game_uid']} · {money(o['amount'])} · "
+                            f"{STATUS.get(o['status'], '')}", callback_data=f"ap:o:{o['id']}")])
+    if user := await db.find_user(raw):
+        rows.append([B(text=f"👤 {user.get('first_name') or ''} @{user.get('username') or '-'} · {user['id']}",
+                       callback_data=f"ap:u:{user['id']}")])
+    if not rows:
+        return await message.answer("❌ Ҳеҷ чиз ёфт нашуд.", reply_markup=kb([B(text="🔍 Боз ҷустуҷӯ", callback_data="ap:search")], [BACK]))
+    if len(rows) == 1:  # a single match: open it straight away
+        data = rows[0][0].callback_data
+        kind, ident = data.split(":")[1], int(data.split(":")[2])
+        return await {"o": send_order, "r": send_receipt, "u": send_user}[kind](message, ident)
+    rows.append([B(text="🔍 Боз ҷустуҷӯ", callback_data="ap:search"), BACK])
+    await message.answer(f"🔍 Ёфт шуд: {len(rows) - 1}", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+# ---------------------------------------------------------------- receipt archive (30 days), one by one
+ARCHIVE_FILTERS = {"rej": ("rejected", "❌ Радшуда"), "all": (None, "🧾 Ҳама")}
+
+
+async def _archive_item(flt: str, pos: int):
+    status, title = ARCHIVE_FILTERS[flt]
+    items = await db.receipts_since(int(time.time()) - 30 * 86400, status)
+    if not items:
+        return None, title, 0
+    pos = max(0, min(pos, len(items) - 1))
+    return items[pos], title, len(items), pos
+
+
+@router.callback_query(F.data == "ap:arch")
+async def cb_archive_menu(call: CallbackQuery):
+    since = int(time.time()) - 30 * 86400
+    rej = len(await db.receipts_since(since, "rejected"))
+    total = len(await db.receipts_since(since))
+    await call.message.answer("🗂 <b>Архиви чекҳо — 30 рӯзи охир</b>\nЯк-як бо тугмаҳои ◀️ ▶️ дида мешаванд.",
+                              reply_markup=kb([B(text=f"❌ Радшуда ({rej})", callback_data="ap:av:rej:0")],
+                                              [B(text=f"🧾 Ҳамаи чекҳо ({total})", callback_data="ap:av:all:0")], [BACK]))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:av:"))
+async def cb_archive_view(call: CallbackQuery):
+    _, _, flt, pos = call.data.split(":")
+    result = await _archive_item(flt, int(pos))
+    if result[0] is None:
+        return await call.answer("Дар 30 рӯз чек нест", show_alert=True)
+    topup, title, total, pos = result
+    caption = f"{title} · {pos + 1}/{total}\n\n" + await receipt_caption(topup)
+    caption += f"\n📌 {STATUS.get(topup['status'], topup['status'])} · {_dt(topup['updated_at'])}"
+    if topup.get("reject_reason"):
+        caption += f"\n📝 {topup['reject_reason']}"
+    nav = []
+    if pos > 0:
+        nav.append(B(text="◀️ Пеш", callback_data=f"ap:av:{flt}:{pos - 1}"))
+    nav.append(B(text=f"{pos + 1}/{total}", callback_data="ap:noop"))
+    if pos + 1 < total:
+        nav.append(B(text="Баъд ▶️", callback_data=f"ap:av:{flt}:{pos + 1}"))
+    rows = [nav]
+    if topup["status"] in ("waiting", "review"):
+        rows += receipt_kb(topup["id"]).inline_keyboard
+    rows.append([B(text="👤 Муштарӣ", callback_data=f"ap:u:{topup['user_id']}"), B(text="🗂 Архив", callback_data="ap:arch")])
+    markup = InlineKeyboardMarkup(inline_keyboard=rows)
+    media = InputMediaPhoto(media=topup["receipt_file_id"], caption=caption[:1024])
+    try:
+        if call.message.photo:  # flip the same message
+            await call.message.edit_media(media, reply_markup=markup)
+        else:
+            await call.message.answer_photo(topup["receipt_file_id"], caption=caption[:1024], reply_markup=markup)
+    except Exception:
+        await call.message.answer_photo(topup["receipt_file_id"], caption=caption[:1024], reply_markup=markup)
+    await call.answer()
+
+
+@router.callback_query(F.data == "ap:noop")
+async def cb_noop(call: CallbackQuery):
+    await call.answer()
 
 
 async def send_user(message: Message, user_id: int):

@@ -529,7 +529,7 @@
       S.selected.clear(); S.multi = false;
       await refreshUser();
       if (res.status === "unpaid") requestSheet(res);
-      else { toast(T("orderCreated")); S.historyTab = "orders"; go("#/history"); }
+      else { toast(`${T("orderCreated")} ${res.order}`); S.historyTab = "orders"; go("#/history"); }
     } catch (e) {
       toast(e.message, true);
       btn.disabled = false; btn.innerHTML = `${icon("card")}${esc(T("pay"))}`;
@@ -597,7 +597,7 @@
           `<button class="${S.historyFilter === f ? "on" : ""}" data-hfilter="${f}">${esc(T(f))}</button>`).join("")}</div>
         ${grouped(list, (o) => `<div class="item"><span class="ic">${icon(o.items[0] && /ваучер|level/i.test(o.items[0].title) ? "ticket" : "package")}</span>
           <span class="grow"><span class="t ellipsis" style="display:block">${esc(o.items.map((i) => i.title + (i.qty > 1 ? " ×" + i.qty : "")).join(", "))}</span>
-          <span class="s ellipsis" style="display:block">${timeOf(o.created_at)} · ${esc(methodName(o.method))} · ID ${esc(o.uid)}</span></span>
+          <span class="s ellipsis" style="display:block"><b style="color:var(--primary-text)">${esc(o.code)}</b> · ${timeOf(o.created_at)} · ${esc(methodName(o.method))} · ID ${esc(o.uid)}</span></span>
           <span class="r"><b>${moneyText(o.amount)}</b><br><span class="status ${o.status}">${esc(T("st_" + o.status))}</span></span></div>`)}`;
     } else {
       const rows = h.transactions.map((t) => ({ ...t, _k: "tx" })).concat(h.topups.filter((t) => t.status !== "approved").map((t) => ({ ...t, _k: "top" })))
