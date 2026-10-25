@@ -1,4 +1,6 @@
 import os
+import re
+from urllib.parse import quote
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,8 +35,9 @@ class Config:
     web_port: int = int(os.getenv("WEB_PORT", "8080"))
     admin_ids: list[int] = field(default_factory=lambda: _ids(os.getenv("ADMIN_IDS", "")))
     admin_chat_id: int = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
-    support_url: str = os.getenv("SUPPORT_URL", "https://t.me/")
-    reviews_url: str = os.getenv("REVIEWS_URL", "https://t.me/")
+    support_url_env: str = os.getenv("SUPPORT_URL", "https://t.me/")
+    reviews_url_env: str = os.getenv("REVIEWS_URL", "https://t.me/")
+    dc_pay_f1: str = os.getenv("DC_PAY_F1", "133")  # service field of pay.dc.tj links
     db_path: str = os.getenv("DB_PATH", str(BASE_DIR / "data.db"))
     rub_rate_env: float = float(os.getenv("RUB_RATE", "0.1073"))  # 1 RUB = X TJS
     referral_percent: float = float(os.getenv("REFERRAL_PERCENT", "3"))
@@ -60,6 +63,26 @@ class Config:
             return float(self.overrides.get(key) or default)
         except ValueError:
             return default
+
+    @property
+    def support_url(self) -> str:
+        return self.overrides.get("support_url") or self.support_url_env
+
+    @property
+    def reviews_url(self) -> str:
+        return self.overrides.get("reviews_url") or self.reviews_url_env
+
+    @property
+    def sub_channel(self) -> str:
+        """Channel customers must join before buying (@name or -100… id); empty = no requirement."""
+        return self.overrides.get("sub_channel", "") if self.overrides.get("sub_required") == "1" else ""
+
+    def dc_pay_link(self, card: str, amount: float, comment: str) -> str:
+        """Dushanbe City payment link: opens the DC app with the card and the exact amount filled in."""
+        digits = re.sub(r"\D", "", card)
+        if len(digits) < 12:
+            return ""
+        return (f"https://pay.dc.tj/?a={digits}&c={quote(comment)}&f1={self.dc_pay_f1}&s={amount:.2f}")
 
     @property
     def usd_rate(self) -> float:

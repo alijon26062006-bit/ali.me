@@ -499,9 +499,11 @@ async def sync_supplier_catalog() -> str:
 
 
 async def catalog_sync_loop():
+    from .supplier import supplier
     while True:
         try:
-            log.info("catalog sync: %s", await sync_supplier_catalog())
+            if supplier.enabled:
+                log.info("catalog sync: %s", await sync_supplier_catalog())
         except Exception:
             log.exception("catalog sync")
         await asyncio.sleep(600)  # docs: cache the catalog for 5-15 minutes

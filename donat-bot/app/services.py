@@ -149,7 +149,8 @@ async def create_order(bot: Bot, user: dict, raw_items: list[dict], game_uid: st
         raise ShopError("Тарзи пардохт нодуруст")
     order_id = await db.create_order(user["id"], items, title, total, game_uid, method, "unpaid", fields)
     topup = await create_topup(bot, user, total, method, order_id=order_id)
-    return {"order": order_code(order_id), "topup": topup["code"], "status": "unpaid", "amount": topup["amount"]}
+    return {"order": order_code(order_id), "topup": topup["code"], "status": "unpaid", "amount": topup["amount"],
+            "pay_url": topup["pay_url"]}
 
 
 async def pay_order_from_balance(bot: Bot, order_id: int) -> bool:
@@ -423,7 +424,18 @@ async def create_topup(bot: Bot, user: dict, base_amount: float, method: str, or
     amount = await db.unique_amount(base_amount)
     topup_id = await db.create_topup(user["id"], amount, method, order_id)
     await send_payment_message(bot, user, topup_id)
-    return {"code": topup_code(topup_id), "amount": amount}
+    return {"code": topup_code(topup_id), "amount": amount,
+            "pay_url": payment_link(config.method(method), await db.get_topup(topup_id))}
+
+
+def payment_link(pm, topup: dict) -> str:
+    """Button link for paying a request: Dushanbe City gets a pay.dc.tj link with the card and exact amount
+    filled in; other methods use the link an admin set in /panel, if any."""
+    if pm.id == "dc":
+        link = config.dc_pay_link(pm.card, topup["amount"], f"{config.shop_name} {topup_code(topup['id'])}")
+        if link:
+            return link
+    return pm.pay_url
 
 
 async def send_payment_message(bot: Bot, user: dict, topup_id: int):
@@ -440,8 +452,9 @@ async def send_payment_message(bot: Bot, user: dict, topup_id: int):
     text = t(lang, "pay_request", code=topup_code(topup_id), order_line=order_line, amount=amount,
              method=pm.title, card_label=pm.card_label, card=pm.card)
     rows = []
-    if pm.pay_url:
-        rows.append([InlineKeyboardButton(text=t(lang, "btn_pay"), url=pm.pay_url)])
+    link = payment_link(pm, topup)
+    if link:
+        rows.append([InlineKeyboardButton(text=t(lang, "btn_pay"), url=link, style="success")])
     rows.append([InlineKeyboardButton(text=t(lang, "btn_cancel_topup"), callback_data=f"top:cancel:{topup_id}",
                                       style="danger")])
     await safe_send(bot, user["id"], text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))

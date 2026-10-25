@@ -91,6 +91,9 @@ class ManualSupplier:
     async def balance_usd(self) -> float | None:
         return None
 
+    async def close(self):
+        pass
+
 
 class DonatixSupplier:
     enabled = True
@@ -238,6 +241,10 @@ class DonatixSupplier:
         self._account_cache[key] = (time.time() + 600, result)
         return result
 
+    async def close(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
     async def balance_usd(self) -> float | None:
         try:
             data = await self.request("GET", "/balance")
@@ -280,11 +287,18 @@ def _find_rate(obj, depth: int = 0) -> float | None:
     return None
 
 
-def _make_supplier():
-    key = config.supplier_api_key
-    if not key:
-        return ManualSupplier()
-    return DonatixSupplier(config.supplier_api_url or "https://donatix.tj/api/v1", key)
+class SupplierSwitch:
+    """The supplier everyone imports. The API key can be replaced at runtime (/panel) without a restart."""
+
+    def __init__(self):
+        self.impl = ManualSupplier()
+        self.configure(config.overrides.get("supplier_api_key") or config.supplier_api_key)
+
+    def configure(self, key: str):
+        self.impl = DonatixSupplier(config.supplier_api_url or "https://donatix.tj/api/v1", key) if key else ManualSupplier()
+
+    def __getattr__(self, name):
+        return getattr(self.impl, name)
 
 
-supplier = _make_supplier()
+supplier = SupplierSwitch()

@@ -144,7 +144,7 @@
       sniper: "Снайпер", freeLook: "Free Look", fireBtn: "Андозаи тугмаи оташ", dpi: "DPI (тавсия)",
       selected: "Интихоб шуд", shareRef: "Даъват кардан", copyLink: "Нусха", terms: "Шартҳои истифода",
       termsText: "Пардохт пас аз тасдиқи чек ба баланс ворид мешавад. Фармоиш ба ID-е, ки шумо ворид кардед, фиристода мешавад — масъулияти дурустии ID бар дӯши харидор аст. Пас аз иҷро бозгашти пул имконнопазир аст. Агар фармоиш иҷро нашавад, маблағ ба баланс баргардонида мешавад.",
-      checking: "Санҷиши аккаунт…", accountNotFound: "Аккаунт бо ин ID ёфт нашуд", account: "Аккаунт", noMethods: "Ҳоло тарзи пардохт дастрас нест. Ба дастгирӣ нависед.", cats: "категория", noResults: "Ҳеҷ чиз ёфт нашуд", insufficient: "Баланс нокифоя — бонкро интихоб кунед",
+      payInBank: "Пардохт дар бонк", checking: "Санҷиши аккаунт…", accountNotFound: "Аккаунт бо ин ID ёфт нашуд", account: "Аккаунт", noMethods: "Ҳоло тарзи пардохт дастрас нест. Ба дастгирӣ нависед.", cats: "категория", noResults: "Ҳеҷ чиз ёфт нашуд", insufficient: "Баланс нокифоя — бонкро интихоб кунед",
     },
     ru: {
       morning: "Доброе утро", day: "Добрый день", evening: "Добрый вечер", night: "Доброй ночи",
@@ -182,7 +182,7 @@
       sniper: "Снайпер", freeLook: "Свободный обзор", fireBtn: "Размер кнопки огня", dpi: "DPI (рекомендация)",
       selected: "Выбрано", shareRef: "Пригласить", copyLink: "Копировать", terms: "Условия использования",
       termsText: "Оплата зачисляется на баланс после проверки чека. Заказ отправляется на указанный вами ID — ответственность за правильность ID несёт покупатель. После выполнения возврат невозможен. Если заказ не выполнен, сумма возвращается на баланс.",
-      checking: "Проверяем аккаунт…", accountNotFound: "Аккаунт с таким ID не найден", account: "Аккаунт", noMethods: "Сейчас способы оплаты недоступны. Напишите в поддержку.", cats: "категорий", noResults: "Ничего не найдено", insufficient: "Недостаточно средств — выберите банк",
+      payInBank: "Оплатить в банке", checking: "Проверяем аккаунт…", accountNotFound: "Аккаунт с таким ID не найден", account: "Аккаунт", noMethods: "Сейчас способы оплаты недоступны. Напишите в поддержку.", cats: "категорий", noResults: "Ничего не найдено", insufficient: "Недостаточно средств — выберите банк",
     },
   };
   let LANG = "tj";
@@ -542,7 +542,8 @@
         <h3 style="margin:0 0 6px;font-size:21px">${esc(T("requestCreated"))}</h3>
         <div class="chip" style="margin-bottom:12px">${esc(res.topup)} · ${moneyText(res.amount, { cur: "TJS" })}</div>
         <p class="muted" style="margin:0 0 20px">${esc(T("requestHint"))}</p>
-        <button class="cta" data-act="to-chat">${icon("send")}${esc(T("toChat"))}</button>
+        ${res.pay_url && /^https:\/\//.test(res.pay_url) ? `<button class="cta" data-link="${esc(res.pay_url)}" style="margin-bottom:10px">${icon("card")}${esc(T("payInBank"))}</button>` : ""}
+        <button class="cta" data-act="to-chat" ${res.pay_url ? 'style="background:var(--surface-3);color:var(--text)"' : ""}>${icon("send")}${esc(T("toChat"))}</button>
         <button class="cta" data-close style="margin-top:10px;background:var(--surface-3);color:var(--text)">${esc(T("ok"))}</button></div>`);
   }
 

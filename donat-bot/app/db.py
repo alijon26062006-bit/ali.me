@@ -98,6 +98,9 @@ class DB:
         await self._migrate()
         await self.conn.commit()
         config.overrides.update({r["key"]: r["value"] for r in await self.fetchall("SELECT * FROM settings")})
+        if config.overrides.get("supplier_api_key"):  # key changed in /panel wins over .env
+            from .supplier import supplier
+            supplier.configure(config.overrides["supplier_api_key"])
         for admin_id in config.overrides.get("admin_ids", "").split(","):  # admins added with the owner link
             if admin_id.strip().isdigit() and int(admin_id) not in config.admin_ids:
                 config.admin_ids.append(int(admin_id))

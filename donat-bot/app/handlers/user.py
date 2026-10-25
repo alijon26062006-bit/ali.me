@@ -7,6 +7,7 @@ from .. import keyboards as kb
 from ..config import config
 from ..db import db, topup_code
 from ..services import level_info, money, cancel_topup, submit_receipt, safe_send
+from ..subscription import is_subscribed
 from ..texts import t
 
 router = Router(name="user")
@@ -127,6 +128,16 @@ async def cb_set_cur(call: CallbackQuery):
     await db.set_user_field(user["id"], "currency", cur)
     await call.answer(t(user["lang"], "currency_set", cur="Сомонӣ" if cur == "TJS" else "Рубл ₽"))
     await call.message.edit_text(t(user["lang"], "welcome"), reply_markup=kb.main_menu(user["lang"]))
+
+
+@router.callback_query(F.data == "sub:check")
+async def cb_sub_check(call: CallbackQuery, bot: Bot):
+    user, _ = await ensure_user(call.from_user)
+    if not await is_subscribed(bot, call.from_user.id):
+        return await call.answer(t(user["lang"], "sub_need_short"), show_alert=True)
+    await call.answer()
+    await call.message.edit_text(t(user["lang"], "sub_ok"))
+    await send_welcome(call.message, user["lang"])
 
 
 @router.callback_query(F.data == "m:nowebapp")

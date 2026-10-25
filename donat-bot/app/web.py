@@ -17,7 +17,9 @@ from .catalog import GROUPS, get_catalog, get_product
 from .config import BASE_DIR, config
 from .db import db, order_code, topup_code
 from .services import ShopError, check_supplier_order, clean_fields, create_order, create_topup, level_info
+from .subscription import is_subscribed
 from .supplier import supplier
+from .texts import t
 
 log = logging.getLogger(__name__)
 WEBAPP_DIR = BASE_DIR / "webapp"
@@ -80,7 +82,7 @@ async def bootstrap(request: web.Request):
     me = await bot.me()
     return web.json_response({
         "shop_name": config.shop_name, "bot_username": me.username,
-        "support_url": config.support_url, "reviews_url": config.reviews_url,
+        "support_url": config.support_url, "reviews_url": config.reviews_url, "sub_channel": config.sub_channel,
         "rub_rate": config.rub_rate, "topup_amounts": config.topup_amounts,
         "referral_percent": config.referral_percent,
         "methods": [{"id": m.id, "title": m.title, "subtitle": m.subtitle, "icon": m.icon, "currency": m.currency}
@@ -93,7 +95,13 @@ async def me(request: web.Request):
     return web.json_response(await user_payload(request))
 
 
+async def require_subscription(request: web.Request):
+    if not await is_subscribed(request.app["bot"], request["user"]["id"]):
+        raise ShopError(f"{t(request['user']['lang'], 'sub_need_short')}: {config.sub_channel}")
+
+
 async def post_order(request: web.Request):
+    await require_subscription(request)
     body = await request.json()
     fields = body.get("fields") if isinstance(body.get("fields"), dict) else None
     result = await create_order(request.app["bot"], request["user"], body.get("items") or [],
@@ -102,6 +110,7 @@ async def post_order(request: web.Request):
 
 
 async def post_topup(request: web.Request):
+    await require_subscription(request)
     body = await request.json()
     try:
         amount = float(body.get("amount", 0))

@@ -13,6 +13,7 @@ from ..catalog import (CATEGORIES, CATEGORY_BY_ID, FEATURED, FEATURED_TITLES, SO
 from ..config import config
 from ..db import db, order_code, topup_code
 from ..services import admin_order_kb, any_method, money, receipt_caption, receipt_kb, user_link
+from ..supplier import supplier
 from ..web import MEDIA_DIR
 from .admin import Broadcast, stats_text
 
@@ -27,6 +28,7 @@ STATUS = {"unpaid": "⏳ интизори пардохт", "processing": "🔄 �
 
 
 class PanelInput(StatesGroup):
+    setting = State()
     banner = State()
     usd = State()
     markup = State()
@@ -64,7 +66,7 @@ async def panel_view() -> tuple[str, InlineKeyboardMarkup]:
         [B(text=f"💵 Қурби $: {config.usd_rate:g}", callback_data="ap:usd"),
          B(text=f"📈 Наценка: {config.markup:g}%", callback_data="ap:markup")],
         [B(text=f"🛒 Каталог: {SOURCE['name']}", callback_data="ap:sync"), B(text="🖼 Баннерҳо", callback_data="ap:ban")],
-        [B(text="🔄 Навсозӣ", callback_data="ap:main")],
+        [B(text="⚙️ Танзимот", callback_data="ap:set"), B(text="🔄 Навсозӣ", callback_data="ap:main")],
     )
 
 
@@ -287,7 +289,8 @@ def _method_view(method_id: str) -> tuple[str, InlineKeyboardMarkup] | None:
         return None
     on = config.overrides.get(f"enabled:{m.id}", "1") == "1"
     text = (f"💳 <b>{m.title}</b>\n{m.subtitle}\n\n"
-            f"Рақам: <code>{m.card or '—'}</code>\nЛинки пардохт: {m.pay_url or '—'}\n"
+            f"Рақам: <code>{m.card or '—'}</code>\n"
+            f"Линки пардохт: {'🔗 худкор pay.dc.tj (рақам + маблағ)' if m.id == 'dc' and config.dc_pay_link(m.card, 1, 'x') else (m.pay_url or '—')}\n"
             f"Ҳолат: {'✅ фаъол' if on else '⏸ хомӯш'}" + ("" if m.card.strip() else "\n\n⚠️ То рақам нагузоред, муштарӣ намебинад."))
     return text, kb(
         [B(text="✏️ Рақами корт", callback_data=f"ap:pmc:{m.id}"), B(text="🔗 Линк", callback_data=f"ap:pmu:{m.id}")],
@@ -424,6 +427,119 @@ async def cb_sync(call: CallbackQuery):
     except Exception as e:
         report = f"❌ {e}"
     await call.message.answer(f"🛒 Каталог: {report}")
+
+
+# ---------------------------------------------------------------- settings: links, channel, API key
+SETTING_PROMPTS = {
+    "support_url": "📞 Линки дастгирӣ: <code>@username</code> ё <code>https://t.me/...</code>",
+    "reviews_url": "⭐ Линки канал/шарҳҳо: <code>@channel</code> ё <code>https://t.me/...</code>",
+    "sub_channel": ("📢 Канали обунаи ҳатмӣ: <code>@channel</code>\n"
+                    "Аввал ботро ба канал ҳамчун <b>админ</b> илова кунед, вагарна санҷида наметавонад."),
+    "supplier_api_key": "🔑 Калиди нави Donatix API (<code>dx_live_…</code>). Паём баъд аз сабт нест карда мешавад.",
+}
+
+
+def _settings_view() -> tuple[str, InlineKeyboardMarkup]:
+    o = config.overrides
+    sub_on = o.get("sub_required") == "1"
+    key = o.get("supplier_api_key") or config.supplier_api_key
+    text = ("⚙️ <b>Танзимот</b>\n\n"
+            f"📞 Дастгирӣ: {config.support_url}\n"
+            f"⭐ Канал/шарҳҳо: {config.reviews_url}\n"
+            f"📢 Обунаи ҳатмӣ: {('✅ ' + o.get('sub_channel', '')) if sub_on and o.get('sub_channel') else '❌ хомӯш'}\n"
+            f"🔑 Donatix API: {('…' + key[-4:]) if key else 'нест'} · {supplier.name}")
+    return text, kb(
+        [B(text="📞 Дастгирӣ", callback_data="ap:sv:support_url"), B(text="⭐ Канал", callback_data="ap:sv:reviews_url")],
+        [B(text="📢 Канали обуна", callback_data="ap:sv:sub_channel"),
+         B(text="⏸ Обунаро хомӯш" if sub_on else "▶️ Обунаро фаъол", callback_data="ap:subt")],
+        [B(text="🔑 Donatix API", callback_data="ap:sv:supplier_api_key")],
+        [BACK])
+
+
+@router.callback_query(F.data == "ap:set")
+async def cb_settings(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text, markup = _settings_view()
+    await call.message.edit_text(text, reply_markup=markup, disable_web_page_preview=True)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:sv:"))
+async def cb_setting_edit(call: CallbackQuery, state: FSMContext):
+    key = call.data.split(":", 2)[2]
+    await state.set_state(PanelInput.setting)
+    await state.update_data(key=key)
+    await call.message.answer(SETTING_PROMPTS[key] + CANCEL_HINT)
+    await call.answer()
+
+
+def _tg_link(value: str) -> str | None:
+    v = value.strip()
+    if re.fullmatch(r"@[A-Za-z0-9_]{4,32}", v):
+        return f"https://t.me/{v[1:]}"
+    if re.fullmatch(r"https://[^\s<>\"']+", v):
+        return v
+    return None
+
+
+@router.message(PanelInput.setting, F.text, ~F.text.startswith("/"))
+async def got_setting(message: Message, state: FSMContext, bot: Bot):
+    key = (await state.get_data())["key"]
+    value = message.text.strip()
+    if key in ("support_url", "reviews_url"):
+        link = _tg_link(value)
+        if not link:
+            return await message.answer("Линк нодуруст. Масалан @username ё https://t.me/username")
+        await db.set_setting(key, link)
+    elif key == "sub_channel":
+        m = re.fullmatch(r"(?:https://t\.me/|@)?([A-Za-z0-9_]{4,32})", value)
+        channel = f"@{m.group(1)}" if m else value if re.fullmatch(r"-100\d{6,}", value) else ""
+        if not channel:
+            return await message.answer("Канал нодуруст. Масалан @mychannel")
+        try:
+            me = await bot.me()
+            member = await bot.get_chat_member(channel, me.id)
+            if member.status not in ("administrator", "creator"):
+                return await message.answer(f"⚠️ Бот дар {channel} админ нест. Ботро админ кунед ва боз фиристед.")
+        except Exception as e:
+            return await message.answer(f"⚠️ Каналро ёфта натавонистам ё бот админ нест: {str(e)[:120]}")
+        await db.set_setting("sub_channel", channel)
+        await db.set_setting("sub_required", "1")
+    elif key == "supplier_api_key":
+        try:
+            await message.delete()  # don't leave the key in the chat
+        except Exception:
+            pass
+        if not re.fullmatch(r"dx_[A-Za-z0-9_]{6,}", value):
+            return await message.answer("Калид нодуруст. Бояд бо dx_ сар шавад.")
+        old = supplier.impl
+        supplier.configure(value)
+        balance = await supplier.balance_usd()
+        if balance is None:
+            await supplier.impl.close()
+            supplier.impl = old
+            return await message.answer("❌ Donatix ин калидро қабул накард (ё дастрас нест). Калиди кӯҳна монд.")
+        await old.close()
+        await db.set_setting("supplier_api_key", value)
+        await message.answer(f"✅ Калид сабт шуд. Баланси Donatix: {balance:.2f} USD. Каталог нав мешавад…")
+        try:
+            await message.answer(f"🛒 {await sync_supplier_catalog()}")
+        except Exception as e:
+            await message.answer(f"⚠️ Каталог: {str(e)[:150]}")
+    await state.clear()
+    text, markup = _settings_view()
+    await message.answer("✅ Нигоҳ дошта шуд\n\n" + text, reply_markup=markup, disable_web_page_preview=True)
+
+
+@router.callback_query(F.data == "ap:subt")
+async def cb_sub_toggle(call: CallbackQuery):
+    if not config.overrides.get("sub_channel"):
+        return await call.answer("Аввал канали обунаро гузоред", show_alert=True)
+    on = config.overrides.get("sub_required") == "1"
+    await db.set_setting("sub_required", "0" if on else "1")
+    text, markup = _settings_view()
+    await call.message.edit_text(text, reply_markup=markup, disable_web_page_preview=True)
+    await call.answer("⏸ Хомӯш" if on else "▶️ Фаъол")
 
 
 # ---------------------------------------------------------------- home-screen banners

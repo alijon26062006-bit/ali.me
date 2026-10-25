@@ -11,6 +11,7 @@ from .catalog import catalog_sync_loop, load_cached_supplier_catalog
 from .config import config
 from .db import db
 from .handlers import admin, panel, shop, user
+from .subscription import SubscriptionMiddleware
 from .services import (balance_watcher, delivery_worker, receipt_reminder, requeue_unsent_orders,
                        supplier_poller)
 from .web import create_app
@@ -26,6 +27,8 @@ async def main():
     bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_routers(admin.router, panel.router, shop.router, user.router)  # admin first: its FSM states must win
+    dp.message.outer_middleware(SubscriptionMiddleware())
+    dp.callback_query.outer_middleware(SubscriptionMiddleware())
 
     await bot.set_my_commands([BotCommand(command="start", description="Менюи асосӣ")])
     if config.webapp_url.startswith("https://"):
@@ -43,9 +46,7 @@ async def main():
              asyncio.create_task(balance_watcher(bot))]
     tasks += [asyncio.create_task(delivery_worker(bot)) for _ in range(3)]
     await requeue_unsent_orders()
-    from .supplier import supplier
-    if supplier.enabled:
-        tasks.append(asyncio.create_task(catalog_sync_loop()))
+    tasks.append(asyncio.create_task(catalog_sync_loop()))
     if not config.admin_ids:
         logging.warning("ADMIN_IDS is empty — receipts will not reach anyone. Send /id to the bot and set ADMIN_IDS.")
     if not config.payment_methods:
