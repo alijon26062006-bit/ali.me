@@ -5,10 +5,11 @@ import re
 import logging
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
 from .catalog import CATEGORY_BY_ID, PRODUCTS, get_product
 from .config import config
+from . import receipt
 from .db import db, order_code, topup_code
 from .supplier import WRONG_ACCOUNT_CODES, supplier
 from .texts import t
@@ -382,9 +383,8 @@ async def complete_order(bot: Bot, order_id: int, codes: list[str] | None = None
         return False
     order = await db.get_order(order_id)
     await db.add_spent(order["user_id"], order["amount"])
-    await notify_user(bot, order["user_id"], "order_done", code=order_code(order_id),
-                      title=order["title"], uid=order["game_uid"])
     buyer = await db.get_user(order["user_id"])
+    await send_order_receipt(bot, order, buyer)
     await notify_admins(bot, f"✅ <b>Фармоиш иҷро шуд</b> <code>{order_code(order_id)}</code>\n\n"
                              f"📦 {order['title']}\n🎮 ID: <code>{order['game_uid']}</code>\n"
                              f"💰 {money(order['amount'])}\n👤 {user_link(buyer) if buyer else order['user_id']}")
@@ -398,6 +398,44 @@ async def complete_order(bot: Bot, order_id: int, codes: list[str] | None = None
             await db.add_ref_earned(user["ref_by"], bonus)
             await notify_user(bot, user["ref_by"], "ref_bonus", amount=money(bonus))
     return True
+
+
+async def _account_nick(order: dict, items: list[dict]) -> str:
+    sku = next((it.get("sku") for it in items if it.get("sku")), "")
+    if not (supplier.enabled and sku):
+        return ""
+    try:
+        fields = json.loads(order.get("fields") or "{}") or {"uid": order["game_uid"]}
+        return (await supplier.check_account(sku, fields)).get("player_name") or ""
+    except Exception:
+        return ""
+
+
+async def send_order_receipt(bot: Bot, order: dict, buyer: dict | None):
+    """'Order done' message to the buyer, as a receipt picture in the shop's colors when Pillow is available."""
+    lang, currency = (buyer["lang"], buyer["currency"]) if buyer else ("tj", "TJS")
+    code = order_code(order["id"])
+    text = t(lang, "order_done", code=code, title=order["title"], uid=order["game_uid"])
+    await db.notify(order["user_id"], text)
+    items = json.loads(order["items"])
+    product = await get_product(items[0]["product_id"]) if items else None
+    game = order["title"].rsplit(" (", 1)[1].rstrip(")") if order["title"].endswith(")") else ""
+    pm = config.method(order["method"])
+    name = " ".join(x for x in ((buyer or {}).get("first_name"), f"@{buyer['username']}" if buyer and buyer.get("username")
+                                else "") if x) or str(order["user_id"])
+    picture = receipt.safe_render({
+        "shop": config.shop_name, "code": code, "ts": receipt.stamp(order["updated_at"], config.timezone),
+        "buyer": name, "product": items[0]["title"] if len(items) == 1 else order["title"], "game": game,
+        "uid": order["game_uid"], "nick": await _account_nick(order, items),
+        "method": pm.title if pm else receipt.LABELS.get(lang, receipt.LABELS["tj"])["balance"],
+        "amount": money(order["amount"], currency), "image": (product or {}).get("image", ""),
+    }, lang)
+    if picture:
+        try:
+            return await bot.send_photo(order["user_id"], BufferedInputFile(picture, f"{code}.jpg"), caption=text)
+        except Exception as e:
+            log.warning("receipt photo to %s failed: %s", order["user_id"], e)
+    await safe_send(bot, order["user_id"], text)
 
 
 async def refund_order(bot: Bot, order_id: int, notify: bool = True) -> bool:
