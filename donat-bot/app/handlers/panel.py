@@ -13,7 +13,7 @@ from ..catalog import (CATEGORIES, CATEGORY_BY_ID, FEATURED, FEATURED_TITLES, SO
 from ..keyboards import PANEL_BUTTON
 from ..config import config
 from ..db import db, order_code, topup_code
-from ..services import admin_order_kb, any_method, money, receipt_caption, receipt_kb, user_link
+from ..services import admin_order_kb, apply_menu_button, any_method, money, receipt_caption, receipt_kb, user_link
 from ..supplier import supplier
 from ..web import MEDIA_DIR
 from .admin import Broadcast, stats_text
@@ -689,6 +689,7 @@ def _settings_view() -> tuple[str, InlineKeyboardMarkup]:
     text = ("⚙️ <b>Танзимот</b>\n\n"
             f"🏷 Ном: <b>{config.shop_name}</b>\n"
             f"🪙 Тиинҳои тасодуфӣ дар дархост: {'✅ фаъол (10.77)' if cents else '❌ хомӯш (10.00)'}\n"
+            f"🛍 Тугмаи «Мағоза» (чапи майдони паём): {'✅ фаъол' if config.menu_button else '❌ хомӯш'}\n"
             f"📞 Дастгирӣ: {config.support_url}\n"
             f"⭐ Канал/шарҳҳо: {config.reviews_url}\n"
             f"📢 Обунаи ҳатмӣ: {('✅ ' + o.get('sub_channel', '')) if sub_on and o.get('sub_channel') else '❌ хомӯш'}\n"
@@ -699,6 +700,7 @@ def _settings_view() -> tuple[str, InlineKeyboardMarkup]:
          B(text="⏸ Обунаро хомӯш" if sub_on else "▶️ Обунаро фаъол", callback_data="ap:subt")],
         [B(text="🏷 Номи мағоза", callback_data="ap:sv:shop_name"),
          B(text="🪙 Тиинҳо: " + ("хомӯш кун" if cents else "фаъол кун"), callback_data="ap:cents")],
+        [B(text="🛍 Мағоза: " + ("хомӯш кун" if config.menu_button else "фаъол кун"), callback_data="ap:menubtn")],
         [B(text="🔑 Donatix API", callback_data="ap:sv:supplier_api_key")],
         [BACK])
 
@@ -781,6 +783,17 @@ async def got_setting(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     text, markup = _settings_view()
     await message.answer("✅ Нигоҳ дошта шуд\n\n" + text, reply_markup=markup, disable_web_page_preview=True)
+
+
+@router.callback_query(F.data == "ap:menubtn")
+async def cb_menu_button(call: CallbackQuery, bot: Bot):
+    if not config.menu_button and not config.webapp_url.startswith("https://"):
+        return await call.answer("Мини-апп суроғаи https надорад", show_alert=True)
+    await db.set_setting("menu_button", "0" if config.menu_button else "1")
+    await apply_menu_button(bot)
+    text, markup = _settings_view()
+    await call.message.edit_text(text, reply_markup=markup, disable_web_page_preview=True)
+    await call.answer("Барои дидан чатро аз нав кушоед")
 
 
 @router.callback_query(F.data == "ap:cents")

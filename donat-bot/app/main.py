@@ -4,7 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
+from aiogram.types import BotCommand
 from aiohttp import web
 
 from .catalog import catalog_sync_loop, load_cached_supplier_catalog
@@ -12,7 +12,7 @@ from .config import config
 from .db import db
 from .handlers import admin, panel, shop, user
 from .subscription import SubscriptionMiddleware
-from .services import (balance_watcher, delivery_worker, receipt_reminder, requeue_unsent_orders,
+from .services import (apply_menu_button, balance_watcher, delivery_worker, receipt_reminder, requeue_unsent_orders,
                        supplier_poller)
 from .web import create_app
 
@@ -31,10 +31,8 @@ async def main():
     dp.callback_query.outer_middleware(SubscriptionMiddleware())
 
     await bot.set_my_commands([BotCommand(command="start", description="Менюи асосӣ")])
-    if config.webapp_url.startswith("https://"):
-        await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Мағоза",
-                                                                    web_app=WebAppInfo(url=config.webapp_url + "/")))
-    else:
+    await apply_menu_button(bot)
+    if not config.webapp_url.startswith("https://"):
         logging.warning("WEBAPP_URL is not an https:// URL — Mini App buttons are disabled")
 
     runner = web.AppRunner(create_app(bot))

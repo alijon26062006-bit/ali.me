@@ -69,6 +69,12 @@ class Config:
         return self.overrides.get("shop_name") or self.shop_name_env
 
     @property
+    def menu_button(self) -> bool:
+        """'Мағоза' button left of the message field (opens the Mini App). Off until the shop has a stable domain."""
+        return self.overrides.get("menu_button", os.getenv("MENU_BUTTON", "0")) == "1" and \
+            self.webapp_url.startswith("https://")
+
+    @property
     def unique_cents(self) -> bool:
         """Add random cents to request amounts (helps matching transfers once auto-payment exists). Off by default."""
         return self.overrides.get("unique_cents", os.getenv("UNIQUE_CENTS", "0")) == "1"

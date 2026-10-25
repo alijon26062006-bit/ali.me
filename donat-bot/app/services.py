@@ -24,6 +24,19 @@ LEVELS = [  # (min total spent, key, title, cashback-like referral percent)
 ]
 
 
+async def apply_menu_button(bot: Bot):
+    """Shows or removes the 'Мағоза' Mini App button next to the message field for every chat."""
+    from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
+    try:
+        if config.menu_button:
+            await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Мағоза",
+                                                                        web_app=WebAppInfo(url=config.webapp_url + "/")))
+        else:
+            await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+    except Exception as e:
+        log.warning("menu button: %s", e)
+
+
 class ShopError(Exception):
     """Error shown to the user as-is."""
 
