@@ -1,5 +1,4 @@
 """/panel — button-driven admin panel: receipts, orders, search, customer card, payment details, rate."""
-import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -13,7 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from ..catalog import (CATEGORIES, CATEGORY_BY_ID, FEATURED, FEATURED_TITLES, SOURCE, load_cached_supplier_catalog,
                        sync_supplier_catalog, tjs_price)
-from ..keyboards import PANEL_BUTTON
+from ..keyboards import PANEL_BUTTON, reply_menu
 from ..config import config
 from ..db import db, order_code, topup_code
 from ..services import admin_order_kb, apply_menu_button, any_method, money, receipt_caption, receipt_kb, user_link
@@ -673,14 +672,13 @@ def _owner_id() -> int:
 
 
 async def _admins_view(bot: Bot) -> tuple[str, InlineKeyboardMarkup]:
-    env_admins = {int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x.isdigit()}
     rows, lines = [], []
     for aid in config.admin_ids:
         u = await db.get_user(aid)
         name = f"{u['first_name'] or ''} @{u['username'] or '-'}" if u else "ҳоло /start накардааст"
-        tag = " 👑" if aid == _owner_id() else (" (.env)" if aid in env_admins else "")
+        tag = " 👑" if aid == _owner_id() else ""
         lines.append(f"• <code>{aid}</code> {name}{tag}")
-        if aid != _owner_id() and aid not in env_admins:
+        if aid != _owner_id():
             rows.append([B(text=f"➖ {aid}", callback_data=f"ap:admdel:{aid}")])
     rows += [[B(text="➕ Админи нав (ID)", callback_data="ap:admadd")], [BACK]]
     return "🛡 <b>Админҳо</b>\n\n" + "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
@@ -709,7 +707,8 @@ async def got_admin(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     await db.add_admin(int(value))
     try:
-        await bot.send_message(int(value), "✅ Ба шумо дастрасии админ дода шуд. /start ва баъд «🛠 Панел».")
+        await bot.send_message(int(value), "✅ Ба шумо дастрасии админ дода шуд. Тугмаи «🛠 Панел» дар поён ё /panel",
+                               reply_markup=reply_menu("tj", int(value)))
     except Exception:
         pass
     text, markup = await _admins_view(bot)

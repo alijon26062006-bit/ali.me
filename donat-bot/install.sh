@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-command installer for the donat bot (Ubuntu / Debian).
-#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/quirky-cannon-jv0k4o/donat-bot/install.sh | sudo bash -s -- <BOT_TOKEN> [DONATIX_KEY] [ADMIN_ID] [DOMAIN]
+#   curl -fsSL https://raw.githubusercontent.com/alijon26062006-bit/ali.me/claude/quirky-cannon-jv0k4o/donat-bot/install.sh | sudo bash -s -- <BOT_TOKEN> [DONATIX_KEY] [ADMIN_ID] [owner=NEW_OWNER_ID] [DOMAIN]
 # Installs everything, starts the bot as a service and prints a one-time link: press START in it to become admin.
 # With a domain it serves the Mini App over HTTPS via Caddy; without one it uses a free
 # temporary Cloudflare tunnel (the https address changes after every restart — fine for testing).
@@ -22,11 +22,13 @@ say "Танзимот / Настройки"
 # Arguments in any order, recognised by their shape:
 #   123456:ABC…   bot token        dx_live_…  Donatix API key
 #   7418217143    admin ID         shop.tj    domain
-BOT_TOKEN=${BOT_TOKEN:-}; ADMIN_IDS=${ADMIN_IDS:-}; DOMAIN=${DOMAIN:-}; SUPPLIER_KEY=${SUPPLIER_KEY:-}
+#   owner=7418217143  new owner: full access, gets the Panel button
+BOT_TOKEN=${BOT_TOKEN:-}; ADMIN_IDS=${ADMIN_IDS:-}; DOMAIN=${DOMAIN:-}; SUPPLIER_KEY=${SUPPLIER_KEY:-}; NEW_OWNER=""
 for arg in "$@"; do
   arg=${arg//[[:space:]]/}
   if [[ "$arg" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]; then BOT_TOKEN=$arg
   elif [[ "$arg" =~ ^dx_[A-Za-z0-9_]+$ ]]; then SUPPLIER_KEY=$arg
+  elif [[ "$arg" =~ ^owner[=:]([0-9]{5,15})$ ]]; then NEW_OWNER=${BASH_REMATCH[1]}; ADMIN_IDS=${ADMIN_IDS:+$ADMIN_IDS,}$NEW_OWNER
   elif [[ "$arg" =~ ^[0-9]{5,15}$ ]]; then ADMIN_IDS=${ADMIN_IDS:+$ADMIN_IDS,}$arg
   elif [[ "$arg" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then DOMAIN=$arg
   elif [ -n "$arg" ]; then echo "⚠️ Номаълум / Неизвестный аргумент: ${arg:0:12}…"
@@ -168,6 +170,32 @@ SH
   START_CMD="$APP/start-tunnel.sh"
 fi
 
+if [ -n "$ADMIN_IDS" ]; then  # also save them in the bot's database (what the Panel → 🛡 Админҳо list uses)
+  python3 - "$APP/data.db" "$ADMIN_IDS" "$NEW_OWNER" <<'PY'
+import sqlite3, sys
+path, ids, owner = sys.argv[1:]
+db = sqlite3.connect(path)
+db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+def put(key, value):
+    db.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+               (key, value))
+row = db.execute("SELECT value FROM settings WHERE key='admin_ids'").fetchone()
+saved = [x for x in (row[0] if row else "").split(",") if x.strip().isdigit()]
+for x in ids.split(","):
+    if x.isdigit() and x not in saved:
+        saved.append(x)
+put("admin_ids", ",".join(saved))
+row = db.execute("SELECT value FROM settings WHERE key='removed_admins'").fetchone()
+removed = [x for x in (row[0] if row else "").split(",") if x and x not in ids.split(",")]
+put("removed_admins", ",".join(removed))
+if owner:
+    put("owner_claimed", owner)
+    put("panel_kb_sent", "")  # resend the Panel button to every admin on start
+db.commit()
+print("👑 Соҳиб / Владелец:", owner) if owner else None
+PY
+fi
+
 say "Хизмати systemd / Сервис"
 cat > /etc/systemd/system/$SERVICE.service <<UNIT
 [Unit]
@@ -224,6 +252,11 @@ if [ -z "$ADMIN_IDS" ] && [ -z "$(owner_claimed)" ]; then
   [ -z "$(owner_claimed)" ] && echo "Вақт гузашт. Истинод боз ҳам кор мекунад / Время вышло, ссылка всё ещё работает: $LINK"
 fi
 echo
+if [ -n "$ADMIN_IDS" ]; then
+  echo "👥 Админҳо дар бот / Админы в боте: $(python3 -c "import sqlite3,sys; r=sqlite3.connect(sys.argv[1]).execute(\"SELECT value FROM settings WHERE key='admin_ids'\").fetchone(); print(r[0] if r else '')" "$APP/data.db" 2>/dev/null)"
+  echo "ℹ️ Админи нав бояд ботро кушода /start пахш кунад → тугмаи «🛠 Панел» пайдо мешавад (ё /panel нависед)."
+  echo "ℹ️ Новый админ должен открыть бота и нажать /start → появится кнопка «🛠 Панел» (или написать /panel)."
+fi
 echo "Логҳо / Логи:        journalctl -u $SERVICE -f"
 echo "Аз нав / Перезапуск: systemctl restart $SERVICE"
 echo "Навсозӣ / Обновить:  такрор кардани ҳамин фармон / повторить эту же команду"

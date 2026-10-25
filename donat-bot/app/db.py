@@ -104,6 +104,10 @@ class DB:
         for admin_id in config.overrides.get("admin_ids", "").split(","):  # admins added with the owner link
             if admin_id.strip().isdigit() and int(admin_id) not in config.admin_ids:
                 config.admin_ids.append(int(admin_id))
+        removed = {int(x) for x in config.overrides.get("removed_admins", "").split(",") if x.isdigit()}
+        owner = config.overrides.get("owner_claimed", "")
+        for admin_id in [a for a in config.admin_ids if a in removed and str(a) != owner]:
+            config.admin_ids.remove(admin_id)  # removed in the panel, even if still listed in .env
 
     async def _migrate(self):
         """Add columns introduced after the first release to existing databases."""
@@ -125,6 +129,9 @@ class DB:
         saved = [x for x in config.overrides.get("admin_ids", "").split(",") if x]
         if str(user_id) not in saved:
             await self.set_setting("admin_ids", ",".join(saved + [str(user_id)]))
+        removed = [x for x in config.overrides.get("removed_admins", "").split(",") if x]
+        if str(user_id) in removed:
+            await self.set_setting("removed_admins", ",".join(x for x in removed if x != str(user_id)))
 
     async def set_setting(self, key: str, value: str):
         await self.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
@@ -353,6 +360,9 @@ class DB:
             config.admin_ids.remove(user_id)
         saved = [x for x in config.overrides.get("admin_ids", "").split(",") if x and x != str(user_id)]
         await self.set_setting("admin_ids", ",".join(saved))
+        removed = [x for x in config.overrides.get("removed_admins", "").split(",") if x]
+        if str(user_id) not in removed:
+            await self.set_setting("removed_admins", ",".join(removed + [str(user_id)]))
 
     async def report(self, since: int, until: int) -> dict:
         """Sales between two unix times (orders by completion time, top-ups by approval time)."""

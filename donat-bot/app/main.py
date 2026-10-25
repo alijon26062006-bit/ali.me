@@ -11,10 +11,28 @@ from .catalog import catalog_sync_loop, load_cached_supplier_catalog
 from .config import config
 from .db import db
 from .handlers import admin, panel, shop, user
+from .keyboards import reply_menu
 from .subscription import SubscriptionMiddleware
 from .services import (apply_menu_button, balance_watcher, delivery_worker, receipt_reminder, requeue_unsent_orders,
                        supplier_poller)
 from .web import create_app
+
+
+async def send_panel_buttons(bot: Bot):
+    """Gives every admin the bottom «🛠 Панел» button once, without waiting for them to press /start."""
+    sent = [x for x in config.overrides.get("panel_kb_sent", "").split(",") if x]
+    for admin_id in list(config.admin_ids):
+        if str(admin_id) in sent:
+            continue
+        user = await db.get_user(admin_id)
+        lang = user["lang"] if user else "tj"
+        try:
+            await bot.send_message(admin_id, "🛠 <b>Шумо админи бот ҳастед.</b>\nПанел — тугмаи «🛠 Панел» дар поён ё /panel",
+                                   reply_markup=reply_menu(lang, admin_id))
+            sent.append(str(admin_id))
+        except Exception as e:  # never pressed Start yet: Telegram doesn't let bots write first
+            logging.info("panel button for %s not sent: %s", admin_id, e)
+    await db.set_setting("panel_kb_sent", ",".join(sent))
 
 
 async def main():
@@ -32,6 +50,7 @@ async def main():
 
     await bot.set_my_commands([BotCommand(command="start", description="Менюи асосӣ")])
     await apply_menu_button(bot)
+    await send_panel_buttons(bot)
     if not config.webapp_url.startswith("https://"):
         logging.warning("WEBAPP_URL is not an https:// URL — Mini App buttons are disabled")
 
