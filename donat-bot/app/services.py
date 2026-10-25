@@ -107,6 +107,7 @@ async def build_items(raw_items: list[dict]) -> tuple[list[dict], float, str]:
         category = product["category"]
         items.append({"product_id": product["id"], "title": product["title"], "sku": product.get("sku", ""),
                       "dx_quantity": product.get("dx_quantity"), "price": product["price"], "qty": qty,
+                      "cost_usd": product.get("price_usd"),  # supplier price at order time, for reports
                       "field_keys": [f["key"] for f in product.get("fields", [])]})
         total += product["price"] * qty
     title = ", ".join(f"{i['title']}" + (f" ×{i['qty']}" if i["qty"] > 1 else "") for i in items)
@@ -383,6 +384,10 @@ async def complete_order(bot: Bot, order_id: int, codes: list[str] | None = None
     await db.add_spent(order["user_id"], order["amount"])
     await notify_user(bot, order["user_id"], "order_done", code=order_code(order_id),
                       title=order["title"], uid=order["game_uid"])
+    buyer = await db.get_user(order["user_id"])
+    await notify_admins(bot, f"✅ <b>Фармоиш иҷро шуд</b> <code>{order_code(order_id)}</code>\n\n"
+                             f"📦 {order['title']}\n🎮 ID: <code>{order['game_uid']}</code>\n"
+                             f"💰 {money(order['amount'])}\n👤 {user_link(buyer) if buyer else order['user_id']}")
     if codes:  # gift cards / keys
         await notify_user(bot, order["user_id"], "order_codes",
                           codes="\n".join(f"<code>{c}</code>" for c in codes[:50]))

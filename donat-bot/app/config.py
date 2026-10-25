@@ -45,6 +45,7 @@ class Config:
     # Supplier (auto-delivery) API
     supplier_api_url: str = os.getenv("SUPPLIER_API_URL", "").rstrip("/")
     supplier_api_key: str = os.getenv("SUPPLIER_API_KEY", "")
+    timezone: str = os.getenv("TIMEZONE", "Asia/Dushanbe")  # day boundaries in reports
     owner_code: str = os.getenv("OWNER_CODE", "")  # one-time secret: /start owner_<code> makes you admin
     usd_rate_env: float = float(os.getenv("USD_RATE", "11.0"))   # somoni per 1 USD (supplier prices are USD)
     markup_env: float = float(os.getenv("MARKUP_PERCENT", "15"))

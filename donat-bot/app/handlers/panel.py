@@ -1,6 +1,9 @@
 """/panel — button-driven admin panel: receipts, orders, search, customer card, payment details, rate."""
+import os
 import re
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
@@ -29,6 +32,8 @@ STATUS = {"unpaid": "⏳ интизори пардохт", "processing": "🔄 �
 
 
 class PanelInput(StatesGroup):
+    period = State()
+    new_admin = State()
     price = State()
     setting = State()
     banner = State()
@@ -65,12 +70,13 @@ async def panel_view() -> tuple[str, InlineKeyboardMarkup]:
         [B(text=f"🧾 Чекҳо ({receipts})", callback_data="ap:receipts"),
          B(text=f"📦 Фармоишҳо ({orders})", callback_data="ap:orders")],
         [B(text="🗂 Архиви чекҳо (30 рӯз)", callback_data="ap:arch"), B(text="💳 Реквизитҳо", callback_data="ap:pay")],
+        [B(text="📊 Ҳисобот", callback_data="ap:rep:today"), B(text="👥 Мизоҷон", callback_data="ap:cl:0")],
         [B(text="📢 Рассылка", callback_data="ap:bc"), B(text=f"💱 Қурби рубл: {config.rub_rate}", callback_data="ap:rate")],
         [B(text=f"💵 Қурби $: {config.usd_rate:g}", callback_data="ap:usd"),
          B(text=f"📈 Наценка: {config.markup:g}%", callback_data="ap:markup")],
         [B(text=f"🛒 Каталог: {SOURCE['name']}", callback_data="ap:sync"), B(text="🖼 Баннерҳо", callback_data="ap:ban")],
         [B(text="🏷 Нархҳо", callback_data="ap:pr"), B(text="⚙️ Танзимот", callback_data="ap:set")],
-        [B(text="🔄 Навсозӣ", callback_data="ap:main")],
+        [B(text="🛡 Админҳо", callback_data="ap:adm"), B(text="🔄 Навсозӣ", callback_data="ap:main")],
     )
 
 
@@ -289,7 +295,8 @@ async def send_user(message: Message, user_id: int):
                   for tp in topups]
     await message.answer("\n".join(lines), reply_markup=kb(
         [B(text="💬 Навиштан", callback_data=f"ap:um:{user_id}"), B(text="💰 Баланс", callback_data=f"ap:ub:{user_id}")],
-        [B(text="✅ Анбан" if u["banned"] else "🚫 Бан", callback_data=f"ap:uban:{user_id}")],
+        [B(text="📜 Таърихи пурра", callback_data=f"ap:uh:{user_id}:0"),
+         B(text="✅ Анбан" if u["banned"] else "🚫 Бан", callback_data=f"ap:uban:{user_id}")],
         [BACK]))
 
 
@@ -517,6 +524,207 @@ async def cb_sync(call: CallbackQuery):
     except Exception as e:
         report = f"❌ {e}"
     await call.message.answer(f"🛒 Каталог: {report}")
+
+
+# ---------------------------------------------------------------- reports
+TZ = ZoneInfo(config.timezone)
+PERIODS = {"today": "Имрӯз", "yesterday": "Дирӯз", "7d": "7 рӯз", "30d": "30 рӯз"}
+
+
+def _period_bounds(key: str) -> tuple[int, int, str]:
+    now = datetime.now(TZ)
+    start_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if key == "yesterday":
+        a, b = start_today - timedelta(days=1), start_today
+    elif key == "7d":
+        a, b = start_today - timedelta(days=6), now + timedelta(seconds=1)
+    elif key == "30d":
+        a, b = start_today - timedelta(days=29), now + timedelta(seconds=1)
+    else:
+        a, b = start_today, now + timedelta(seconds=1)
+    return int(a.timestamp()), int(b.timestamp()), PERIODS.get(key, key)
+
+
+async def report_text(since: int, until: int, title: str) -> str:
+    r = await db.report(since, until)
+    a = datetime.fromtimestamp(since, TZ).strftime("%d.%m.%Y")
+    b = datetime.fromtimestamp(until - 1, TZ).strftime("%d.%m.%Y")
+    cost = r["cost_usd"] * config.usd_rate
+    lines = [f"📊 <b>Ҳисобот: {title}</b>", f"🗓 {a}" + (f" — {b}" if a != b else ""), "",
+             f"✅ Фармоишҳои иҷрошуда: <b>{r['orders']}</b> ({r['buyers']} харидор)",
+             f"💰 Гардиш: <b>{money(r['revenue'])}</b>"]
+    if r["cost_usd"]:
+        lines.append(f"💵 Хароҷоти Donatix: ${r['cost_usd']:.2f} ≈ {money(cost)}")
+        lines.append(f"📈 Фоидаи тахминӣ: <b>{money(r['revenue'] - cost)}</b>"
+                     + (" (баъзе фармоишҳо бе нарх)" if r["unknown_cost"] else ""))
+    lines += [f"❌ Бекоршуда: {r['cancelled']}",
+              f"🧾 Пуркуниҳо: {r['topups']['c']} · {money(r['topups']['s'])} · рад: {r['rejected']}",
+              f"👥 Корбарони нав: {r['new_users']}"]
+    if r["top"]:
+        lines.append("\n🏆 <b>Маҳсулоти беҳтарин:</b>")
+        lines += [f"{i + 1}. {name} — {qty} адад" for i, (name, qty) in enumerate(r["top"])]
+    return "\n".join(lines)
+
+
+def _report_kb() -> InlineKeyboardMarkup:
+    return kb([B(text=v, callback_data=f"ap:rep:{k}") for k, v in list(PERIODS.items())[:2]],
+              [B(text=v, callback_data=f"ap:rep:{k}") for k, v in list(PERIODS.items())[2:]],
+              [B(text="📅 Давраи дилхоҳ", callback_data="ap:repc")], [BACK])
+
+
+@router.callback_query(F.data.startswith("ap:rep:"))
+async def cb_report(call: CallbackQuery):
+    since, until, title = _period_bounds(call.data.split(":")[2])
+    try:
+        await call.message.edit_text(await report_text(since, until, title), reply_markup=_report_kb())
+    except Exception:
+        await call.message.answer(await report_text(since, until, title), reply_markup=_report_kb())
+    await call.answer()
+
+
+@router.callback_query(F.data == "ap:repc")
+async def cb_report_custom(call: CallbackQuery, state: FSMContext):
+    await state.set_state(PanelInput.period)
+    await call.message.answer("📅 Давраро нависед: <code>01.10.2026 - 25.10.2026</code>\n"
+                              "(ё як рӯз: <code>20.10.2026</code>)" + CANCEL_HINT)
+    await call.answer()
+
+
+@router.message(PanelInput.period, F.text, ~F.text.startswith("/"))
+async def got_period(message: Message, state: FSMContext):
+    dates = re.findall(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?", message.text)
+    try:
+        parsed = []
+        for d, m, y in dates[:2]:
+            year = int(y) + (2000 if y and len(y) == 2 else 0) if y else datetime.now(TZ).year
+            parsed.append(datetime(year, int(m), int(d), tzinfo=TZ))
+        assert parsed
+    except (ValueError, AssertionError):
+        return await message.answer("Санаро дуруст нависед, масалан 01.10.2026 - 25.10.2026")
+    a, b = min(parsed), max(parsed) + timedelta(days=1)
+    await state.clear()
+    await message.answer(await report_text(int(a.timestamp()), int(b.timestamp()), "давраи интихобшуда"),
+                         reply_markup=_report_kb())
+
+
+# ---------------------------------------------------------------- customers
+@router.callback_query(F.data.startswith("ap:cl:"))
+async def cb_clients(call: CallbackQuery):
+    page = int(call.data.split(":")[2])
+    total = await db.count_users()
+    users = await db.users_page(page * 10, 10)
+    rows = [[B(text=f"{(u['first_name'] or '')[:14]} @{u['username'] or '-'} · {u['balance']:.2f} см · {u['done_orders']} 🛍"
+                    + (" 🚫" if u["banned"] else ""), callback_data=f"ap:u:{u['id']}")] for u in users]
+    nav = []
+    if page > 0:
+        nav.append(B(text="◀️", callback_data=f"ap:cl:{page - 1}"))
+    nav.append(B(text=f"{page + 1}/{max(1, -(-total // 10))}", callback_data="ap:noop"))
+    if (page + 1) * 10 < total:
+        nav.append(B(text="▶️", callback_data=f"ap:cl:{page + 1}"))
+    rows += [nav, [B(text="🔍 Ҷустуҷӯ (ID / @username)", callback_data="ap:search")], [BACK]]
+    text = f"👥 <b>Мизоҷон</b> — ҳамагӣ {total}\nНав аввал. Барои карточка пахш кунед."
+    try:
+        await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    except Exception:
+        await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+HISTORY_ICON = {"order": "📦", "topup": "🧾", "tx": "💰"}
+TX_NAMES = {"topup": "пуркунӣ", "purchase": "харид", "refund": "бозгашт", "referral": "бонуси ҳамкорӣ",
+            "admin": "аз ҷониби админ"}
+
+
+@router.callback_query(F.data.startswith("ap:uh:"))
+async def cb_user_history(call: CallbackQuery):
+    _, _, uid, page = call.data.split(":")
+    uid, page = int(uid), int(page)
+    rows = await db.user_history(uid, page * 15, 16)
+    more = len(rows) > 15
+    lines = []
+    for r in rows[:15]:
+        when = _dt(r["ts"])
+        if r["kind"] == "order":
+            lines.append(f"📦 <code>{order_code(r['id'])}</code> {r['info'][:28]} · {money(r['amount'])} · "
+                         f"{STATUS.get(r['status'], r['status'])} · {when}")
+        elif r["kind"] == "topup":
+            lines.append(f"🧾 <code>{topup_code(r['id'])}</code> {money(r['amount'])} · "
+                         f"{STATUS.get(r['status'], r['status'])} · {when}")
+        else:
+            lines.append(f"💰 {'+' if r['amount'] > 0 else ''}{r['amount']:.2f} см · {TX_NAMES.get(r['status'], r['status'])}"
+                         f" {r['info'] or ''} · {when}")
+    nav = []
+    if page > 0:
+        nav.append(B(text="◀️", callback_data=f"ap:uh:{uid}:{page - 1}"))
+    if more:
+        nav.append(B(text="▶️", callback_data=f"ap:uh:{uid}:{page + 1}"))
+    markup = InlineKeyboardMarkup(inline_keyboard=[*([nav] if nav else []),
+                                                   [B(text="👤 Карточка", callback_data=f"ap:u:{uid}"),
+                                                    B(text="💰 Баланс ±", callback_data=f"ap:ub:{uid}")]])
+    text = f"📜 <b>Таърих</b> · <code>{uid}</code> · саҳ. {page + 1}\n\n" + ("\n".join(lines) or "Холӣ")
+    await call.message.answer(text, reply_markup=markup)
+    await call.answer()
+
+
+# ---------------------------------------------------------------- admins
+def _owner_id() -> int:
+    claimed = config.overrides.get("owner_claimed", "")
+    return int(claimed) if claimed.isdigit() else (config.admin_ids[0] if config.admin_ids else 0)
+
+
+async def _admins_view(bot: Bot) -> tuple[str, InlineKeyboardMarkup]:
+    env_admins = {int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x.isdigit()}
+    rows, lines = [], []
+    for aid in config.admin_ids:
+        u = await db.get_user(aid)
+        name = f"{u['first_name'] or ''} @{u['username'] or '-'}" if u else "ҳоло /start накардааст"
+        tag = " 👑" if aid == _owner_id() else (" (.env)" if aid in env_admins else "")
+        lines.append(f"• <code>{aid}</code> {name}{tag}")
+        if aid != _owner_id() and aid not in env_admins:
+            rows.append([B(text=f"➖ {aid}", callback_data=f"ap:admdel:{aid}")])
+    rows += [[B(text="➕ Админи нав (ID)", callback_data="ap:admadd")], [BACK]]
+    return "🛡 <b>Админҳо</b>\n\n" + "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "ap:adm")
+async def cb_admins(call: CallbackQuery, state: FSMContext, bot: Bot):
+    await state.clear()
+    text, markup = await _admins_view(bot)
+    await call.message.edit_text(text, reply_markup=markup)
+    await call.answer()
+
+
+@router.callback_query(F.data == "ap:admadd")
+async def cb_admin_add(call: CallbackQuery, state: FSMContext):
+    await state.set_state(PanelInput.new_admin)
+    await call.message.answer("➕ ID-и Telegram-и админи навро нависед (бо /id дар бот мегиранд):" + CANCEL_HINT)
+    await call.answer()
+
+
+@router.message(PanelInput.new_admin, F.text, ~F.text.startswith("/"))
+async def got_admin(message: Message, state: FSMContext, bot: Bot):
+    value = message.text.strip()
+    if not re.fullmatch(r"\d{5,15}", value):
+        return await message.answer("ID бояд танҳо рақам бошад, масалан 6735922033")
+    await state.clear()
+    await db.add_admin(int(value))
+    try:
+        await bot.send_message(int(value), "✅ Ба шумо дастрасии админ дода шуд. /start ва баъд «🛠 Панел».")
+    except Exception:
+        pass
+    text, markup = await _admins_view(bot)
+    await message.answer("✅ Илова шуд\n\n" + text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("ap:admdel:"))
+async def cb_admin_del(call: CallbackQuery, bot: Bot):
+    aid = int(call.data.split(":")[2])
+    if aid == _owner_id():
+        return await call.answer("Соҳибро нест кардан мумкин нест", show_alert=True)
+    await db.remove_admin(aid)
+    text, markup = await _admins_view(bot)
+    await call.message.edit_text("➖ Нест карда шуд\n\n" + text, reply_markup=markup)
+    await call.answer()
 
 
 # ---------------------------------------------------------------- prices: supplier cost, auto price, manual price

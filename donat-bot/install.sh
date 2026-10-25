@@ -27,7 +27,7 @@ for arg in "$@"; do
   arg=${arg//[[:space:]]/}
   if [[ "$arg" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]; then BOT_TOKEN=$arg
   elif [[ "$arg" =~ ^dx_[A-Za-z0-9_]+$ ]]; then SUPPLIER_KEY=$arg
-  elif [[ "$arg" =~ ^[0-9]{5,15}$ ]]; then ADMIN_IDS=$arg
+  elif [[ "$arg" =~ ^[0-9]{5,15}$ ]]; then ADMIN_IDS=${ADMIN_IDS:+$ADMIN_IDS,}$arg
   elif [[ "$arg" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then DOMAIN=$arg
   elif [ -n "$arg" ]; then echo "⚠️ Номаълум / Неизвестный аргумент: ${arg:0:12}…"
   fi
@@ -81,7 +81,12 @@ PY
 }
 set_env BOT_TOKEN "$BOT_TOKEN"
 [ "$(getenv SHOP_NAME)" = "ALI DONAT TJ" ] && set_env SHOP_NAME "NEMAT DONAT"  # old placeholder name
-[ -n "$ADMIN_IDS" ] && set_env ADMIN_IDS "$ADMIN_IDS"
+if [ -n "$ADMIN_IDS" ]; then  # add to the admins already saved, never replace them
+  OLD_ADMINS=$(getenv ADMIN_IDS)
+  MERGED=$(printf '%s,%s' "$OLD_ADMINS" "$ADMIN_IDS" | tr ',' '\n' | grep -E '^[0-9]+$' | awk '!seen[$0]++' | paste -sd, -)
+  set_env ADMIN_IDS "$MERGED"
+  echo "👥 Админҳо / Админы: $MERGED"
+fi
 if [ -n "$SUPPLIER_KEY" ]; then
   set_env SUPPLIER_API_KEY "$SUPPLIER_KEY"
   set_env SUPPLIER_API_URL "https://donatix.tj/api/v1"

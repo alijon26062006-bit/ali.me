@@ -348,6 +348,54 @@ class DB:
     async def clear_price(self, product_id: str):
         await self.execute("UPDATE price_overrides SET price=NULL WHERE product_id=?", product_id)
 
+    async def remove_admin(self, user_id: int):
+        if user_id in config.admin_ids:
+            config.admin_ids.remove(user_id)
+        saved = [x for x in config.overrides.get("admin_ids", "").split(",") if x and x != str(user_id)]
+        await self.set_setting("admin_ids", ",".join(saved))
+
+    async def report(self, since: int, until: int) -> dict:
+        """Sales between two unix times (orders by completion time, top-ups by approval time)."""
+        done = await self.fetchall("SELECT * FROM orders WHERE status='done' AND updated_at>=? AND updated_at<?",
+                                   since, until)
+        cost_usd, unknown_cost, products = 0.0, 0, {}
+        for o in done:
+            for it in json.loads(o["items"]):
+                if it.get("cost_usd") is not None:
+                    cost_usd += float(it["cost_usd"]) * it["qty"]
+                else:
+                    unknown_cost += 1
+                products[it["title"]] = products.get(it["title"], 0) + it["qty"]
+        q = self.fetchone
+        return {
+            "orders": len(done), "revenue": round(sum(o["amount"] for o in done), 2),
+            "cost_usd": round(cost_usd, 4), "unknown_cost": unknown_cost,
+            "cancelled": (await q("SELECT COUNT(*) c FROM orders WHERE status='cancelled' AND updated_at>=? AND updated_at<?",
+                                  since, until))["c"],
+            "topups": await q("SELECT COUNT(*) c, COALESCE(SUM(amount),0) s FROM topups WHERE status='approved'"
+                              " AND updated_at>=? AND updated_at<?", since, until),
+            "rejected": (await q("SELECT COUNT(*) c FROM topups WHERE status='rejected' AND updated_at>=? AND updated_at<?",
+                                 since, until))["c"],
+            "new_users": (await q("SELECT COUNT(*) c FROM users WHERE created_at>=? AND created_at<?", since, until))["c"],
+            "buyers": (await q("SELECT COUNT(DISTINCT user_id) c FROM orders WHERE status='done' AND updated_at>=?"
+                               " AND updated_at<?", since, until))["c"],
+            "top": sorted(products.items(), key=lambda kv: -kv[1])[:5],
+        }
+
+    async def users_page(self, offset: int, limit: int = 10) -> list[dict]:
+        return await self.fetchall(
+            "SELECT u.*, (SELECT COUNT(*) FROM orders o WHERE o.user_id=u.id AND o.status='done') AS done_orders"
+            " FROM users u ORDER BY u.created_at DESC LIMIT ? OFFSET ?", limit, offset)
+
+    async def user_history(self, user_id: int, offset: int, limit: int = 15) -> list[dict]:
+        """Orders, top-ups and balance changes of a customer in one list, newest first."""
+        rows = await self.fetchall(
+            "SELECT 'order' AS kind, id, amount, status, title AS info, created_at AS ts FROM orders WHERE user_id=?"
+            " UNION ALL SELECT 'topup', id, amount, status, method, created_at FROM topups WHERE user_id=?"
+            " UNION ALL SELECT 'tx', id, amount, kind, ref, created_at FROM transactions WHERE user_id=?"
+            " ORDER BY ts DESC LIMIT ? OFFSET ?", user_id, user_id, user_id, limit, offset)
+        return rows
+
     # ---------- stats ----------
     async def stats(self) -> dict:
         day = now() - 86400
