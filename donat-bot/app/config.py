@@ -29,7 +29,7 @@ class PaymentMethod:
 @dataclass
 class Config:
     bot_token: str = os.getenv("BOT_TOKEN", "")
-    shop_name: str = os.getenv("SHOP_NAME", "ALI DONAT TJ")
+    shop_name_env: str = os.getenv("SHOP_NAME", "NEMAT DONAT")
     webapp_url: str = os.getenv("WEBAPP_URL", "").rstrip("/")
     web_host: str = os.getenv("WEB_HOST", "0.0.0.0")
     web_port: int = int(os.getenv("WEB_PORT", "8080"))
@@ -63,6 +63,15 @@ class Config:
             return float(self.overrides.get(key) or default)
         except ValueError:
             return default
+
+    @property
+    def shop_name(self) -> str:
+        return self.overrides.get("shop_name") or self.shop_name_env
+
+    @property
+    def unique_cents(self) -> bool:
+        """Add random cents to request amounts (helps matching transfers once auto-payment exists). Off by default."""
+        return self.overrides.get("unique_cents", os.getenv("UNIQUE_CENTS", "0")) == "1"
 
     @property
     def support_url(self) -> str:

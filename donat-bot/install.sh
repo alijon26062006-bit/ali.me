@@ -80,6 +80,7 @@ PY
   fi
 }
 set_env BOT_TOKEN "$BOT_TOKEN"
+[ "$(getenv SHOP_NAME)" = "ALI DONAT TJ" ] && set_env SHOP_NAME "NEMAT DONAT"  # old placeholder name
 [ -n "$ADMIN_IDS" ] && set_env ADMIN_IDS "$ADMIN_IDS"
 if [ -n "$SUPPLIER_KEY" ]; then
   set_env SUPPLIER_API_KEY "$SUPPLIER_KEY"

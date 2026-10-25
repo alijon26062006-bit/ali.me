@@ -435,6 +435,7 @@ SETTING_PROMPTS = {
     "reviews_url": "⭐ Линки канал/шарҳҳо: <code>@channel</code> ё <code>https://t.me/...</code>",
     "sub_channel": ("📢 Канали обунаи ҳатмӣ: <code>@channel</code>\n"
                     "Аввал ботро ба канал ҳамчун <b>админ</b> илова кунед, вагарна санҷида наметавонад."),
+    "shop_name": "🏷 Номи нави мағоза (масалан <code>NEMAT DONAT</code>), то 32 ҳарф",
     "supplier_api_key": "🔑 Калиди нави Donatix API (<code>dx_live_…</code>). Паём баъд аз сабт нест карда мешавад.",
 }
 
@@ -443,7 +444,10 @@ def _settings_view() -> tuple[str, InlineKeyboardMarkup]:
     o = config.overrides
     sub_on = o.get("sub_required") == "1"
     key = o.get("supplier_api_key") or config.supplier_api_key
+    cents = config.unique_cents
     text = ("⚙️ <b>Танзимот</b>\n\n"
+            f"🏷 Ном: <b>{config.shop_name}</b>\n"
+            f"🪙 Тиинҳои тасодуфӣ дар дархост: {'✅ фаъол (10.77)' if cents else '❌ хомӯш (10.00)'}\n"
             f"📞 Дастгирӣ: {config.support_url}\n"
             f"⭐ Канал/шарҳҳо: {config.reviews_url}\n"
             f"📢 Обунаи ҳатмӣ: {('✅ ' + o.get('sub_channel', '')) if sub_on and o.get('sub_channel') else '❌ хомӯш'}\n"
@@ -452,6 +456,8 @@ def _settings_view() -> tuple[str, InlineKeyboardMarkup]:
         [B(text="📞 Дастгирӣ", callback_data="ap:sv:support_url"), B(text="⭐ Канал", callback_data="ap:sv:reviews_url")],
         [B(text="📢 Канали обуна", callback_data="ap:sv:sub_channel"),
          B(text="⏸ Обунаро хомӯш" if sub_on else "▶️ Обунаро фаъол", callback_data="ap:subt")],
+        [B(text="🏷 Номи мағоза", callback_data="ap:sv:shop_name"),
+         B(text="🪙 Тиинҳо: " + ("хомӯш кун" if cents else "фаъол кун"), callback_data="ap:cents")],
         [B(text="🔑 Donatix API", callback_data="ap:sv:supplier_api_key")],
         [BACK])
 
@@ -486,7 +492,12 @@ def _tg_link(value: str) -> str | None:
 async def got_setting(message: Message, state: FSMContext, bot: Bot):
     key = (await state.get_data())["key"]
     value = message.text.strip()
-    if key in ("support_url", "reviews_url"):
+    if key == "shop_name":
+        name = re.sub(r"\s+", " ", value)[:32]
+        if len(name) < 2 or "<" in name or ">" in name:
+            return await message.answer("Ном нодуруст. Боз нависед:")
+        await db.set_setting("shop_name", name)
+    elif key in ("support_url", "reviews_url"):
         link = _tg_link(value)
         if not link:
             return await message.answer("Линк нодуруст. Масалан @username ё https://t.me/username")
@@ -529,6 +540,14 @@ async def got_setting(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     text, markup = _settings_view()
     await message.answer("✅ Нигоҳ дошта шуд\n\n" + text, reply_markup=markup, disable_web_page_preview=True)
+
+
+@router.callback_query(F.data == "ap:cents")
+async def cb_cents_toggle(call: CallbackQuery):
+    await db.set_setting("unique_cents", "0" if config.unique_cents else "1")
+    text, markup = _settings_view()
+    await call.message.edit_text(text, reply_markup=markup, disable_web_page_preview=True)
+    await call.answer()
 
 
 @router.callback_query(F.data == "ap:subt")

@@ -421,7 +421,7 @@ async def create_topup(bot: Bot, user: dict, base_amount: float, method: str, or
     old = await db.waiting_topup(user["id"])
     if old:  # one open request at a time
         await cancel_topup(bot, old["id"], silent=True)
-    amount = await db.unique_amount(base_amount)
+    amount = await db.unique_amount(base_amount) if config.unique_cents else round(base_amount, 2)
     topup_id = await db.create_topup(user["id"], amount, method, order_id)
     await send_payment_message(bot, user, topup_id)
     return {"code": topup_code(topup_id), "amount": amount,
