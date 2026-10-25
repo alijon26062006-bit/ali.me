@@ -333,6 +333,9 @@ class DB:
         if active is not None:
             await self.execute("UPDATE price_overrides SET active=? WHERE product_id=?", active, product_id)
 
+    async def clear_price(self, product_id: str):
+        await self.execute("UPDATE price_overrides SET price=NULL WHERE product_id=?", product_id)
+
     # ---------- stats ----------
     async def stats(self) -> dict:
         day = now() - 86400

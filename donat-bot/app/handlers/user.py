@@ -30,8 +30,9 @@ async def cmd_start(message: Message, command: CommandObject, bot: Bot, state: F
         await ensure_user(message.from_user)
         await db.add_admin(message.from_user.id)
         await db.set_setting("owner_claimed", str(message.from_user.id))
-        return await message.answer("✅ <b>Шумо админи бот шудед!</b>\n\nПанел: /panel\n"
-                                    "Аввал: /panel → 💳 Реквизитҳо — рақами кортҳоро гузоред.")
+        return await message.answer("✅ <b>Шумо админи бот шудед!</b>\n\nПанел: /panel ё тугмаи «🛠 Панел» дар поён\n"
+                                    "Аввал: /panel → 💳 Реквизитҳо — рақами кортҳоро гузоред.",
+                                    reply_markup=kb.reply_menu("tj", message.from_user.id))
     ref_by = None
     if command.args and command.args.startswith("ref_") and command.args[4:].isdigit():
         ref_by = int(command.args[4:])
@@ -42,7 +43,7 @@ async def cmd_start(message: Message, command: CommandObject, bot: Bot, state: F
         referrer = await db.get_user(user["ref_by"])
         await safe_send(bot, user["ref_by"], t(referrer["lang"], "new_ref"))
     lang = user["lang"]
-    await message.answer(t(lang, "menu_hint"), reply_markup=kb.reply_menu(lang))
+    await message.answer(t(lang, "menu_hint"), reply_markup=kb.reply_menu(lang, message.from_user.id))
     await send_welcome(message, lang)
 
 
@@ -115,7 +116,7 @@ async def cb_set_lang(call: CallbackQuery):
     await ensure_user(call.from_user)
     await db.set_user_field(call.from_user.id, "lang", lang)
     await call.answer(t(lang, "lang_set"))
-    await call.message.answer(t(lang, "menu_hint"), reply_markup=kb.reply_menu(lang))
+    await call.message.answer(t(lang, "menu_hint"), reply_markup=kb.reply_menu(lang, call.from_user.id))
     await call.message.edit_text(t(lang, "welcome"), reply_markup=kb.main_menu(lang))
 
 

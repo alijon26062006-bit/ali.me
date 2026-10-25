@@ -12,8 +12,15 @@ def webapp_button(text: str, path: str = "", **kw) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=f"{config.webapp_url}/{path}"), **kw)
 
 
-def reply_menu(lang: str) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=f"📋 {t(lang, 'btn_menu')}")]],
+PANEL_BUTTON = "🛠 Панел"
+
+
+def reply_menu(lang: str, user_id: int = 0) -> ReplyKeyboardMarkup:
+    """Bottom keyboard; admins also get a Panel button (a reply keyboard is per chat, so only they see it)."""
+    row = [KeyboardButton(text=f"📋 {t(lang, 'btn_menu')}")]
+    if user_id in config.admin_ids:
+        row.append(KeyboardButton(text=PANEL_BUTTON))
+    return ReplyKeyboardMarkup(keyboard=[row],
                                resize_keyboard=True, is_persistent=True,
                                input_field_placeholder=t(lang, "placeholder"))
 

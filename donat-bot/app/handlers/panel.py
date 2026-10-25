@@ -9,7 +9,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..catalog import (CATEGORIES, CATEGORY_BY_ID, FEATURED, FEATURED_TITLES, SOURCE, load_cached_supplier_catalog,
-                       sync_supplier_catalog)
+                       sync_supplier_catalog, tjs_price)
+from ..keyboards import PANEL_BUTTON
 from ..config import config
 from ..db import db, order_code, topup_code
 from ..services import admin_order_kb, any_method, money, receipt_caption, receipt_kb, user_link
@@ -28,6 +29,7 @@ STATUS = {"unpaid": "⏳ интизори пардохт", "processing": "🔄 �
 
 
 class PanelInput(StatesGroup):
+    price = State()
     setting = State()
     banner = State()
     usd = State()
@@ -66,11 +68,13 @@ async def panel_view() -> tuple[str, InlineKeyboardMarkup]:
         [B(text=f"💵 Қурби $: {config.usd_rate:g}", callback_data="ap:usd"),
          B(text=f"📈 Наценка: {config.markup:g}%", callback_data="ap:markup")],
         [B(text=f"🛒 Каталог: {SOURCE['name']}", callback_data="ap:sync"), B(text="🖼 Баннерҳо", callback_data="ap:ban")],
-        [B(text="⚙️ Танзимот", callback_data="ap:set"), B(text="🔄 Навсозӣ", callback_data="ap:main")],
+        [B(text="🏷 Нархҳо", callback_data="ap:pr"), B(text="⚙️ Танзимот", callback_data="ap:set")],
+        [B(text="🔄 Навсозӣ", callback_data="ap:main")],
     )
 
 
 @router.message(Command("panel", "admin"))
+@router.message(F.text == PANEL_BUTTON)
 async def cmd_panel(message: Message, state: FSMContext):
     await state.clear()
     text, markup = await panel_view()
@@ -427,6 +431,157 @@ async def cb_sync(call: CallbackQuery):
     except Exception as e:
         report = f"❌ {e}"
     await call.message.answer(f"🛒 Каталог: {report}")
+
+
+# ---------------------------------------------------------------- prices: supplier cost, auto price, manual price
+PRICE_GROUPS = [("featured", "⭐ Асосӣ"), ("ff_regions", "🔥 Free Fire — регионҳо"), ("games", "🎮 Бозиҳо"),
+                ("services", "💠 Хизматрасониҳо"), ("telegram", "✈️ Telegram")]
+
+
+def _price_parts(p: dict, overrides: dict) -> dict:
+    o = overrides.get(p["id"])
+    cost = p["price_usd"] * config.usd_rate if "price_usd" in p else None
+    auto = tjs_price(p)
+    manual = o["price"] if o and o["price"] is not None else None
+    hidden = (o and not o["active"]) or (p.get("kind") == "other" and not o)
+    return {"cost": cost, "auto": auto, "manual": manual, "price": manual if manual is not None else auto,
+            "hidden": bool(hidden)}
+
+
+@router.callback_query(F.data == "ap:pr")
+async def cb_prices(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    rows = [[B(text=f"{title} ({sum(1 for c in CATEGORIES if c['group'] == g)})", callback_data=f"ap:prg:{g}:0")]
+            for g, title in PRICE_GROUPS if any(c["group"] == g for c in CATEGORIES)]
+    rows.append([BACK])
+    await call.message.edit_text(f"🏷 <b>Нархҳо</b>\n\nҚурби $: {config.usd_rate:g} · наценка {config.markup:g}%\n"
+                                 "Гурӯҳро интихоб кунед:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:prg:"))
+async def cb_prices_group(call: CallbackQuery):
+    _, _, group, page = call.data.split(":")
+    page = int(page)
+    cats = [c for c in CATEGORIES if c["group"] == group]
+    chunk = cats[page * 12:(page + 1) * 12]
+    rows = [[B(text=f"{c['title']} ({len(c['products'])})", callback_data=f"ap:prc:{c['id']}:0")] for c in chunk]
+    nav = []
+    if page > 0:
+        nav.append(B(text="◀️", callback_data=f"ap:prg:{group}:{page - 1}"))
+    if (page + 1) * 12 < len(cats):
+        nav.append(B(text="▶️", callback_data=f"ap:prg:{group}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([B(text="⬅️ Нархҳо", callback_data="ap:pr")])
+    await call.message.edit_text("🏷 Бозиро интихоб кунед:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:prc:"))
+async def cb_prices_category(call: CallbackQuery):
+    _, _, cat_id, page = call.data.split(":")
+    page = int(page)
+    cat = CATEGORY_BY_ID.get(cat_id)
+    if not cat:
+        return await call.answer("Ёфт нашуд", show_alert=True)
+    overrides = await db.price_overrides()
+    products = cat["products"]
+    rows = []
+    for i in range(page * 20, min(len(products), (page + 1) * 20)):
+        parts = _price_parts(products[i], overrides)
+        mark = "🚫 " if parts["hidden"] else ("✏️ " if parts["manual"] is not None else "")
+        rows.append([B(text=f"{mark}{products[i]['title'][:30]} · {parts['price']:.2f}",
+                       callback_data=f"ap:prp:{cat_id}:{i}")])
+    nav = []
+    if page > 0:
+        nav.append(B(text="◀️", callback_data=f"ap:prc:{cat_id}:{page - 1}"))
+    if (page + 1) * 20 < len(products):
+        nav.append(B(text="▶️", callback_data=f"ap:prc:{cat_id}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([B(text="⬅️", callback_data=f"ap:prg:{cat['group']}:0")])
+    await call.message.edit_text(f"🏷 <b>{cat['title']}</b>\n✏️ — нархи дастӣ, 🚫 — пинҳон.\nМаҳсулотро интихоб кунед:",
+                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+async def _product_view(cat_id: str, idx: int) -> tuple[str, InlineKeyboardMarkup] | None:
+    cat = CATEGORY_BY_ID.get(cat_id)
+    if not cat or idx >= len(cat["products"]):
+        return None
+    p = cat["products"][idx]
+    parts = _price_parts(p, await db.price_overrides())
+    lines = [f"📦 <b>{p['title']}</b> ({cat['title']})", f"<code>{p['id']}</code>", ""]
+    if parts["cost"] is not None:
+        lines.append(f"💵 Нархи Donatix: <b>${p['price_usd']:.4f}</b> = {parts['cost']:.2f} см (қурби {config.usd_rate:g})")
+    lines.append(f"📈 Нархи автоматӣ{f' (+{config.markup:g}%)' if parts['cost'] is not None else ''}: {parts['auto']:.2f} см")
+    if parts["manual"] is not None:
+        lines.append(f"✏️ Нархи дастӣ: <b>{parts['manual']:.2f} см</b>")
+    lines.append(f"🏷 Муштарӣ мебинад: <b>{parts['price']:.2f} см</b>" + (" — 🚫 пинҳон" if parts["hidden"] else ""))
+    if parts["cost"] is not None:
+        profit = parts["price"] - parts["cost"]
+        lines.append(f"💰 Фоида: <b>{profit:+.2f} см</b>" + ("  ⚠️ зиён!" if profit < 0 else ""))
+    rows = [[B(text="✏️ Нархи дастӣ", callback_data=f"ap:prs:{cat_id}:{idx}")]]
+    if parts["manual"] is not None:
+        rows.append([B(text="🔄 Нархи автоматӣ", callback_data=f"ap:pra:{cat_id}:{idx}")])
+    rows.append([B(text="👁 Нишон додан" if parts["hidden"] else "🚫 Пинҳон кардан", callback_data=f"ap:prh:{cat_id}:{idx}")])
+    rows.append([B(text="⬅️", callback_data=f"ap:prc:{cat_id}:{idx // 20}")])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("ap:prp:"))
+async def cb_price_product(call: CallbackQuery):
+    _, _, cat_id, idx = call.data.split(":")
+    view = await _product_view(cat_id, int(idx))
+    if not view:
+        return await call.answer("Ёфт нашуд", show_alert=True)
+    await call.message.edit_text(view[0], reply_markup=view[1])
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ap:prs:"))
+async def cb_price_set(call: CallbackQuery, state: FSMContext):
+    _, _, cat_id, idx = call.data.split(":")
+    cat = CATEGORY_BY_ID.get(cat_id)
+    if not cat or int(idx) >= len(cat["products"]):
+        return await call.answer("Ёфт нашуд", show_alert=True)
+    await state.set_state(PanelInput.price)
+    await state.update_data(cat_id=cat_id, idx=int(idx), product_id=cat["products"][int(idx)]["id"])
+    await call.message.answer(f"✏️ Нархи навро барои <b>{cat['products'][int(idx)]['title']}</b> бо сомонӣ нависед, "
+                              "масалан <code>45.50</code>" + CANCEL_HINT)
+    await call.answer()
+
+
+@router.message(PanelInput.price, F.text, ~F.text.startswith("/"))
+async def got_price(message: Message, state: FSMContext):
+    try:
+        price = round(float(message.text.replace(",", ".").replace(" ", "")), 2)
+        assert 0.1 <= price <= 100000
+    except (ValueError, AssertionError):
+        return await message.answer("Нархро дуруст нависед, масалан 45.50")
+    data = await state.get_data()
+    await state.clear()
+    await db.set_price(data["product_id"], price=price)
+    view = await _product_view(data["cat_id"], data["idx"])
+    await message.answer("✅ Нарх нигоҳ дошта шуд\n\n" + view[0], reply_markup=view[1])
+
+
+@router.callback_query(F.data.startswith("ap:pra:") | F.data.startswith("ap:prh:"))
+async def cb_price_toggle(call: CallbackQuery):
+    _, action, cat_id, idx = call.data.split(":")
+    cat = CATEGORY_BY_ID.get(cat_id)
+    if not cat or int(idx) >= len(cat["products"]):
+        return await call.answer("Ёфт нашуд", show_alert=True)
+    p = cat["products"][int(idx)]
+    if action == "pra":
+        await db.clear_price(p["id"])
+    else:
+        hidden = _price_parts(p, await db.price_overrides())["hidden"]
+        await db.set_price(p["id"], active=1 if hidden else 0)
+    view = await _product_view(cat_id, int(idx))
+    await call.message.edit_text(view[0], reply_markup=view[1])
+    await call.answer("✅")
 
 
 # ---------------------------------------------------------------- settings: links, channel, API key
