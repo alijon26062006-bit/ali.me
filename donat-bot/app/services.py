@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 import logging
+import time
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -162,6 +163,7 @@ async def create_order(bot: Bot, user: dict, raw_items: list[dict], game_uid: st
     pm = config.method(method)
     if not pm:
         raise ShopError("Тарзи пардохт нодуруст")
+    await check_request_limits(user)
     order_id = await db.create_order(user["id"], items, title, total, game_uid, method, "unpaid", fields)
     topup = await create_topup(bot, user, total, method, order_id=order_id)
     return {"order": order_code(order_id), "topup": topup["code"], "status": "unpaid", "amount": topup["amount"],
@@ -464,6 +466,23 @@ async def supplier_poller(bot: Bot):
 
 
 # ---------------------------------------------------------------- top-ups
+MAX_IN_REVIEW = 3  # receipts of one customer waiting for an admin at the same time
+MAX_REQUESTS = 6  # payment requests one customer may open per 10 minutes
+
+
+async def check_request_limits(user: dict):
+    """Stops one customer from flooding admins: a new payment request is refused while too many of their
+    receipts are still unchecked, or when they open requests too fast."""
+    lang = user.get("lang") or "tj"
+    if user["id"] in config.admin_ids:
+        return
+    in_review = await db.count_topups(user["id"], "review")
+    if in_review >= MAX_IN_REVIEW:
+        raise ShopError(t(lang, "too_many_reviews", n=in_review))
+    if await db.count_topups(user["id"], since=int(time.time()) - 600) >= MAX_REQUESTS:
+        raise ShopError(t(lang, "too_many_requests"))
+
+
 async def create_topup(bot: Bot, user: dict, base_amount: float, method: str, order_id: int | None = None) -> dict:
     if user.get("banned"):
         raise ShopError("⛔")
@@ -474,6 +493,8 @@ async def create_topup(bot: Bot, user: dict, base_amount: float, method: str, or
         raise ShopError("Маблағ нодуруст")
     if order_id is None and base_amount not in config.topup_amounts:
         raise ShopError("Танҳо ин маблағҳо дастрасанд")
+    if order_id is None:
+        await check_request_limits(user)
     old = await db.waiting_topup(user["id"])
     if old:  # one open request at a time
         await cancel_topup(bot, old["id"], silent=True)
@@ -576,8 +597,19 @@ async def receipt_caption(topup: dict) -> str:
     return text
 
 
+class DuplicateReceipt(Exception):
+    def __init__(self, code: str):
+        self.code = code
+
+
 async def submit_receipt(bot: Bot, user: dict, file_id: str, unique_id: str | None = None) -> dict | None:
+    """Attaches the photo to the customer's open request and sends it to admins. The very same picture already
+    sent for another request (checked or still waiting) is refused and never reaches admins again."""
     topup = await db.waiting_topup(user["id"])
+    if topup and unique_id:
+        used = [d for d in await db.receipt_duplicates(unique_id, topup["id"]) if d["status"] in ("review", "approved")]
+        if used:
+            raise DuplicateReceipt(topup_code(used[0]["id"]))
     if not topup or not await db.set_topup_status(topup["id"], "review", ("waiting",), receipt_file_id=file_id,
                                                   receipt_unique_id=unique_id):
         return None
@@ -629,7 +661,7 @@ async def receipt_reminder(bot: Bot):
     while True:
         await asyncio.sleep(60)
         try:
-            for level, age in ((1, 600), (2, 1800)):
+            for level, age in ((2, 1800), (1, 600)):  # oldest first: one reminder per receipt per tick
                 for topup in await db.topups_to_remind(age, level):
                     await db.mark_reminded(topup["id"], level)
                     minutes = age // 60

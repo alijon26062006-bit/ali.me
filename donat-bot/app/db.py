@@ -285,6 +285,12 @@ class DB:
         return await self.fetchall("SELECT * FROM topups WHERE receipt_unique_id=? AND id<>? ORDER BY id",
                                    unique_id, exclude_id)
 
+    async def count_topups(self, user_id: int, status: str | None = None, since: int = 0) -> int:
+        sql, args = "SELECT COUNT(*) c FROM topups WHERE user_id=? AND created_at>=?", [user_id, since]
+        if status:
+            sql, args = sql + " AND status=?", args + [status]
+        return (await self.fetchone(sql, *args))["c"]
+
     async def topups_to_remind(self, older_than: int, reminded_below: int) -> list[dict]:
         return await self.fetchall("SELECT * FROM topups WHERE status='review' AND updated_at<=? AND reminded<?",
                                    now() - older_than, reminded_below)

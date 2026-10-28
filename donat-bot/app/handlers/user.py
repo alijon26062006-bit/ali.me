@@ -1,3 +1,5 @@
+import time
+
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -6,7 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from .. import keyboards as kb
 from ..config import config
 from ..db import db, order_code, topup_code
-from ..services import level_info, money, cancel_topup, submit_receipt, safe_send
+from ..services import DuplicateReceipt, level_info, money, cancel_topup, submit_receipt, safe_send
 from ..subscription import is_subscribed
 from ..texts import t
 
@@ -168,12 +170,38 @@ async def cb_cancel_topup(call: CallbackQuery, bot: Bot):
     await call.answer()
 
 
+_last_photo: dict[int, float] = {}  # user id -> time of the last photo we acted on
+_seen_albums: dict[str, float] = {}  # media group id -> time
+
+
+def _flooding(user_id: int, media_group_id: str | None) -> bool:
+    """True for extra photos of an album and for photos sent faster than one per 3 seconds."""
+    now = time.monotonic()
+    if len(_seen_albums) > 1000:
+        for key, ts in list(_seen_albums.items()):
+            if now - ts > 600:
+                del _seen_albums[key]
+    if media_group_id:
+        if media_group_id in _seen_albums:
+            return True
+        _seen_albums[media_group_id] = now
+    if now - _last_photo.get(user_id, 0) < 3:
+        return True
+    _last_photo[user_id] = now
+    return False
+
+
 @router.message(F.photo)
 async def receipt(message: Message, bot: Bot):
+    if _flooding(message.from_user.id, message.media_group_id):
+        return
     user, _ = await ensure_user(message.from_user)
     if user["banned"]:
         return
-    topup = await submit_receipt(bot, user, message.photo[-1].file_id, message.photo[-1].file_unique_id)
+    try:
+        topup = await submit_receipt(bot, user, message.photo[-1].file_id, message.photo[-1].file_unique_id)
+    except DuplicateReceipt as e:
+        return await message.answer(t(user["lang"], "receipt_dup", code=e.code))
     if not topup:
         return await message.answer(t(user["lang"], "receipt_no_request"))
     await message.answer(t(user["lang"], "receipt_received", code=topup_code(topup["id"])))
