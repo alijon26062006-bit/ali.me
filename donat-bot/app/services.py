@@ -4,6 +4,8 @@ import json
 import re
 import logging
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -77,15 +79,70 @@ async def notify_user(bot: Bot, user_id: int, key: str, **kw):
     await safe_send(bot, user_id, text)
 
 
-async def notify_admins(bot: Bot, text: str, markup: InlineKeyboardMarkup | None = None, photo: str | None = None):
+async def notify_admins(bot: Bot, text: str, markup: InlineKeyboardMarkup | None = None, photo: str | None = None,
+                        ref: str | None = None):
+    """Sends to every admin. With `ref` (top:<id> / ord:<id>) each copy is remembered so that when one admin
+    handles it, close_admin_copies() updates all of them."""
     for chat_id in config.admin_targets:
         try:
             if photo:
-                await bot.send_photo(chat_id, photo, caption=text, reply_markup=markup)
+                msg = await bot.send_photo(chat_id, photo, caption=text, reply_markup=markup)
             else:
-                await bot.send_message(chat_id, text, reply_markup=markup)
+                msg = await bot.send_message(chat_id, text, reply_markup=markup)
+            if ref and msg:
+                await db.remember_admin_msg(ref, chat_id, msg.message_id, text, bool(photo))
         except Exception as e:
             log.warning("admin notify %s failed: %s", chat_id, e)
+
+
+async def remember_admin_copy(ref: str, message, admin=None):
+    """Also track a copy an admin opened from /panel or is acting on right now. With `admin` (a Telegram user)
+    their name is saved too, so the 'handled by' line can show it."""
+    if admin:
+        await db.upsert_user(admin.id, admin.username, admin.first_name)
+    if message:
+        await db.remember_admin_msg(ref, message.chat.id, message.message_id, message.html_text or "",
+                                    message.caption is not None)
+
+
+async def admin_name(admin_id: int | None) -> str:
+    if not admin_id:
+        return "🤖 худкор"
+    u = await db.get_user(admin_id)
+    if not u:
+        return f"<code>{admin_id}</code>"
+    return (u.get("first_name") or str(admin_id)) + (f" @{u['username']}" if u.get("username") else "")
+
+
+async def close_admin_copies(bot: Bot, ref: str, line: str):
+    """Writes who handled it under every admin's copy and removes the buttons there."""
+    line = f"{line} · {datetime.now(ZoneInfo(config.timezone)).strftime('%d.%m %H:%M')}"
+    for row in await db.pop_admin_msgs(ref):
+        limit = 1024 if row["photo"] else 4096
+        body = row["body"][: limit - len(line) - 10]
+        try:
+            if row["photo"]:
+                await bot.edit_message_caption(chat_id=row["chat_id"], message_id=row["message_id"],
+                                               caption=f"{body}\n\n{line}", reply_markup=None)
+            else:
+                await bot.edit_message_text(f"{body}\n\n{line}", chat_id=row["chat_id"],
+                                            message_id=row["message_id"], reply_markup=None)
+        except Exception:
+            try:
+                await bot.edit_message_reply_markup(chat_id=row["chat_id"], message_id=row["message_id"],
+                                                    reply_markup=None)
+            except Exception:
+                pass
+
+
+async def handled_text(kind: str, row: dict | None) -> str:
+    """'Already handled' alert: what happened and by whom."""
+    if not row:
+        return "Ёфт нашуд"
+    who = await admin_name(row.get("handled_by")) if row.get("handled_by") else "—"
+    status = {"approved": "✅ қабул шуд", "rejected": "❌ рад шуд", "cancelled": "бекор шуд", "done": "✅ иҷро шуд",
+              "review": "дар санҷиш", "waiting": "интизори чек", "processing": "дар раванд"}.get(row["status"], row["status"])
+    return f"Аллакай коркард шудааст: {status}\n👤 {who}"
 
 
 def user_link(user: dict) -> str:
@@ -338,7 +395,7 @@ async def start_fulfillment(bot: Bot, order_id: int, notify: bool = True):
         f"{head} <code>{code}</code>\n\n👤 {user_link(user)}\n📦 {order['title']}\n"
         f"🎮 {', '.join(f'{k}: <code>{v}</code>' for k, v in fields.items())}\n💰 {money(order['amount'])}"
         + (f"\n\n⚠️ {reason}" if reason and supplier.enabled else ""),
-        admin_order_kb(order_id),
+        admin_order_kb(order_id), ref=f"ord:{order_id}",
     )
 
 
@@ -367,7 +424,7 @@ async def check_supplier_order(bot: Bot, order_id: int):
         user = await db.get_user(order["user_id"])
         await notify_admins(bot, f"⚠️ Donatix фармоиши <code>{order_code(order_id)}</code>-ро иҷро накард\n"
                                  f"👤 {user_link(user)}\n📦 {order['title']}\n🎮 <code>{order['game_uid']}</code>\n\n"
-                                 + "\n".join(failed), admin_order_kb(order_id))
+                                 + "\n".join(failed), admin_order_kb(order_id), ref=f"ord:{order_id}")
     elif not pending:
         await complete_order(bot, order_id, codes)
 
@@ -380,10 +437,11 @@ def admin_order_kb(order_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
-async def complete_order(bot: Bot, order_id: int, codes: list[str] | None = None) -> bool:
-    if not await db.set_order_status(order_id, "done", only_from="processing", note=""):
+async def complete_order(bot: Bot, order_id: int, codes: list[str] | None = None, admin_id: int | None = None) -> bool:
+    if not await db.set_order_status(order_id, "done", only_from="processing", note="", handled_by=admin_id):
         return False
     order = await db.get_order(order_id)
+    await close_admin_copies(bot, f"ord:{order_id}", f"✅ <b>Иҷро кард:</b> {await admin_name(admin_id)}")
     await db.add_spent(order["user_id"], order["amount"])
     buyer = await db.get_user(order["user_id"])
     await send_order_receipt(bot, order, buyer)
@@ -440,10 +498,11 @@ async def send_order_receipt(bot: Bot, order: dict, buyer: dict | None):
     await safe_send(bot, order["user_id"], text)
 
 
-async def refund_order(bot: Bot, order_id: int, notify: bool = True) -> bool:
+async def refund_order(bot: Bot, order_id: int, notify: bool = True, admin_id: int | None = None) -> bool:
     order = await db.get_order(order_id)
-    if not order or not await db.set_order_status(order_id, "cancelled", only_from="processing"):
+    if not order or not await db.set_order_status(order_id, "cancelled", only_from="processing", handled_by=admin_id):
         return False
+    await close_admin_copies(bot, f"ord:{order_id}", f"↩️ <b>Пулро баргардонд:</b> {await admin_name(admin_id)}")
     await db.change_balance(order["user_id"], order["amount"], "refund", order_code(order_id))
     if notify:
         await notify_user(bot, order["user_id"], "order_refunded", code=order_code(order_id),
@@ -466,7 +525,7 @@ async def supplier_poller(bot: Bot):
 
 
 # ---------------------------------------------------------------- top-ups
-MAX_IN_REVIEW = 3  # receipts of one customer waiting for an admin at the same time
+MAX_IN_REVIEW = 1  # a new request only after the admin accepted or rejected the previous receipt
 MAX_REQUESTS = 6  # payment requests one customer may open per 10 minutes
 
 
@@ -476,9 +535,9 @@ async def check_request_limits(user: dict):
     lang = user.get("lang") or "tj"
     if user["id"] in config.admin_ids:
         return
-    in_review = await db.count_topups(user["id"], "review")
-    if in_review >= MAX_IN_REVIEW:
-        raise ShopError(t(lang, "too_many_reviews", n=in_review))
+    if await db.count_topups(user["id"], "review") >= MAX_IN_REVIEW:
+        pending = await db.review_topup(user["id"])
+        raise ShopError(t(lang, "receipt_in_review", code=topup_code(pending["id"])))
     if await db.count_topups(user["id"], since=int(time.time()) - 600) >= MAX_REQUESTS:
         raise ShopError(t(lang, "too_many_requests"))
 
@@ -614,7 +673,7 @@ async def submit_receipt(bot: Bot, user: dict, file_id: str, unique_id: str | No
                                                   receipt_unique_id=unique_id):
         return None
     topup = await db.get_topup(topup["id"])
-    await notify_admins(bot, await receipt_caption(topup), receipt_kb(topup["id"]), photo=file_id)
+    await notify_admins(bot, await receipt_caption(topup), receipt_kb(topup["id"]), photo=file_id, ref=f"top:{topup['id']}")
     return topup
 
 
@@ -625,6 +684,8 @@ async def approve_topup(bot: Bot, topup_id: int, amount: float | None = None, ad
                                      amount=round(amount, 2) if amount is not None else None):
         return False
     topup = await db.get_topup(topup_id)
+    await close_admin_copies(bot, f"top:{topup_id}", f"✅ <b>Қабул кард:</b> {await admin_name(admin_id)}"
+                             + (f" · маблағ {money(topup['amount'])}" if amount is not None else ""))
     await db.change_balance(topup["user_id"], topup["amount"], "topup", topup_code(topup_id))
     await notify_user(bot, topup["user_id"], "topup_approved", amount=money(topup["amount"]), code=topup_code(topup_id))
     if topup["order_id"] and not await pay_order_from_balance(bot, topup["order_id"]):
@@ -646,6 +707,8 @@ async def reject_topup(bot: Bot, topup_id: int, reason: str = "", admin_id: int 
     if not await db.set_topup_status(topup_id, "rejected", ("waiting", "review"), reject_reason=reason_text or None,
                                      handled_by=admin_id):
         return False
+    await close_admin_copies(bot, f"top:{topup_id}", f"❌ <b>Рад кард:</b> {await admin_name(admin_id)}"
+                             + (f" — {reason_text}" if reason_text else ""))
     if topup["order_id"]:
         await db.set_order_status(topup["order_id"], "cancelled", only_from="unpaid")
     text = t(lang, "topup_rejected", code=topup_code(topup_id))
@@ -666,6 +729,6 @@ async def receipt_reminder(bot: Bot):
                     await db.mark_reminded(topup["id"], level)
                     minutes = age // 60
                     await notify_admins(bot, f"⏰ <b>Чек {minutes}+ дақиқа интизор аст!</b>\n\n" + await receipt_caption(topup),
-                                        receipt_kb(topup["id"]), photo=topup["receipt_file_id"])
+                                        receipt_kb(topup["id"]), photo=topup["receipt_file_id"], ref=f"top:{topup['id']}")
         except Exception:
             log.exception("receipt reminder")

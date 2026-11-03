@@ -9,8 +9,8 @@ from aiogram.types import CallbackQuery, Message
 from ..catalog import PRODUCTS
 from ..config import config
 from ..db import db, order_code, topup_code
-from ..services import (REJECT_REASONS, approve_topup, complete_order, money, receipt_kb, refund_order, reject_kb,
-                        reject_topup, queue_order)
+from ..services import (REJECT_REASONS, admin_name, approve_topup, close_admin_copies, complete_order, handled_text,
+                        money, queue_order, receipt_kb, refund_order, reject_kb, reject_topup, remember_admin_copy)
 from ..supplier import supplier
 
 router = Router(name="admin")
@@ -154,15 +154,6 @@ async def do_broadcast(message: Message, state: FSMContext, bot: Bot):
     await status.edit_text(f"✅ Фиристода шуд: {sent}/{len(ids)}")
 
 
-async def _mark(call: CallbackQuery, suffix: str):
-    who = call.from_user.first_name
-    try:
-        if call.message.caption is not None:
-            await call.message.edit_caption(caption=f"{call.message.html_text}\n\n{suffix} — {who}")
-        else:
-            await call.message.edit_text(f"{call.message.html_text}\n\n{suffix} — {who}")
-    except Exception:
-        await call.message.edit_reply_markup(reply_markup=None)
 
 
 class ReceiptInput(StatesGroup):
@@ -173,15 +164,19 @@ class ReceiptInput(StatesGroup):
 @router.callback_query(F.data.startswith("top:ok:"))
 async def cb_topup_ok(call: CallbackQuery, bot: Bot):
     tid = int(call.data.split(":")[2])
+    await remember_admin_copy(f"top:{tid}", call.message, call.from_user)
     if not await approve_topup(bot, tid, admin_id=call.from_user.id):
-        return await call.answer("Аллакай коркард шудааст", show_alert=True)
-    await _mark(call, f"✅ Тасдиқ {topup_code(tid)}")
+        return await call.answer(await handled_text("top", await db.get_topup(tid)), show_alert=True)
     await call.answer("✅")
 
 
 @router.callback_query(F.data.startswith("top:no:"))
 async def cb_topup_no(call: CallbackQuery):
     tid = int(call.data.split(":")[2])
+    topup = await db.get_topup(tid)
+    if not topup or topup["status"] not in ("waiting", "review"):
+        await call.message.edit_reply_markup(reply_markup=None)
+        return await call.answer(await handled_text("top", topup), show_alert=True)
     await call.message.edit_reply_markup(reply_markup=reject_kb(tid))
     await call.answer("Сабабро интихоб кунед")
 
@@ -197,6 +192,7 @@ async def cb_topup_back(call: CallbackQuery, state: FSMContext):
 async def cb_topup_reason(call: CallbackQuery, state: FSMContext, bot: Bot):
     _, _, tid, code = call.data.split(":")
     tid = int(tid)
+    await remember_admin_copy(f"top:{tid}", call.message, call.from_user)
     if code == "custom":
         await state.set_state(ReceiptInput.reason)
         await state.update_data(topup_id=tid, chat_id=call.message.chat.id, message_id=call.message.message_id)
@@ -204,8 +200,7 @@ async def cb_topup_reason(call: CallbackQuery, state: FSMContext, bot: Bot):
                                   " /cancel — бекор")
         return await call.answer()
     if not await reject_topup(bot, tid, code, admin_id=call.from_user.id):
-        return await call.answer("Аллакай коркард шудааст", show_alert=True)
-    await _mark(call, f"❌ Рад {topup_code(tid)}: {REJECT_REASONS[code]['tj']}")
+        return await call.answer(await handled_text("top", await db.get_topup(tid)), show_alert=True)
     await call.answer("❌")
 
 
@@ -214,7 +209,8 @@ async def cb_topup_amount(call: CallbackQuery, state: FSMContext):
     tid = int(call.data.split(":")[2])
     topup = await db.get_topup(tid)
     if not topup or topup["status"] not in ("waiting", "review"):
-        return await call.answer("Аллакай коркард шудааст", show_alert=True)
+        return await call.answer(await handled_text("top", topup), show_alert=True)
+    await remember_admin_copy(f"top:{tid}", call.message, call.from_user)
     await state.set_state(ReceiptInput.amount)
     await state.update_data(topup_id=tid, chat_id=call.message.chat.id, message_id=call.message.message_id)
     await call.message.answer(f"💰 Маблағи воқеан гирифташударо барои {topup_code(tid)} нависед"
@@ -222,13 +218,6 @@ async def cb_topup_amount(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-async def _mark_by_id(bot: Bot, data: dict, suffix: str, who: str):
-    """Mark the original receipt message after a typed reply (amount / custom reason)."""
-    try:
-        await bot.edit_message_reply_markup(chat_id=data["chat_id"], message_id=data["message_id"], reply_markup=None)
-    except Exception:
-        pass
-    await bot.send_message(data["chat_id"], f"{suffix} — {who}", reply_to_message_id=data["message_id"])
 
 
 @router.message(ReceiptInput.amount, F.text, ~F.text.startswith("/"))
@@ -241,9 +230,8 @@ async def got_amount(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     await state.clear()
     if not await approve_topup(bot, data["topup_id"], amount=amount, admin_id=message.from_user.id):
-        return await message.answer("Аллакай коркард шудааст")
-    await _mark_by_id(bot, data, f"✅ Тасдиқ {topup_code(data['topup_id'])} бо маблағи {money(amount)}",
-                      message.from_user.first_name)
+        return await message.answer(await handled_text("top", await db.get_topup(data["topup_id"])))
+    await message.answer(f"✅ {topup_code(data['topup_id'])} тасдиқ шуд: {money(amount)}")
 
 
 @router.message(ReceiptInput.reason, F.text, ~F.text.startswith("/"))
@@ -252,31 +240,29 @@ async def got_reason(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     reason = message.text.strip()[:300]
     if not await reject_topup(bot, data["topup_id"], reason, admin_id=message.from_user.id):
-        return await message.answer("Аллакай коркард шудааст")
-    await _mark_by_id(bot, data, f"❌ Рад {topup_code(data['topup_id'])}: {reason}", message.from_user.first_name)
+        return await message.answer(await handled_text("top", await db.get_topup(data["topup_id"])))
+    await message.answer(f"❌ {topup_code(data['topup_id'])} рад шуд")
 
 
 @router.callback_query(F.data.startswith("ord:"))
 async def cb_order(call: CallbackQuery, bot: Bot):
     _, action, oid = call.data.split(":")
     oid = int(oid)
+    await remember_admin_copy(f"ord:{oid}", call.message, call.from_user)
     if action == "done":
-        ok = await complete_order(bot, oid)
-        label = "✅ Иҷро шуд"
+        ok = await complete_order(bot, oid, admin_id=call.from_user.id)
     elif action == "refund":
-        ok = await refund_order(bot, oid)
-        label = "↩️ Пул баргардонида шуд"
+        ok = await refund_order(bot, oid, admin_id=call.from_user.id)
     else:
         order = await db.get_order(oid)
         if not order or order["status"] != "processing":
-            return await call.answer("Аллакай коркард шудааст", show_alert=True)
+            return await call.answer(await handled_text("ord", order), show_alert=True)
+        await close_admin_copies(bot, f"ord:{oid}", f"🔁 <b>Ба API фиристод:</b> {await admin_name(call.from_user.id)}")
         await call.answer("🔁 Ба навбати API гузошта шуд")
-        await call.message.edit_reply_markup(reply_markup=None)
         return await queue_order(bot, oid, notify=False)
     if not ok:
-        return await call.answer("Аллакай коркард шудааст", show_alert=True)
-    await _mark(call, label)
-    await call.answer()
+        return await call.answer(await handled_text("ord", await db.get_order(oid)), show_alert=True)
+    await call.answer("✅" if action == "done" else "↩️")
 
 
 @router.message(Command("say"))

@@ -15,7 +15,8 @@ from ..catalog import (CATEGORIES, CATEGORY_BY_ID, FEATURED, FEATURED_TITLES, SO
 from ..keyboards import PANEL_BUTTON, reply_menu
 from ..config import config
 from ..db import db, order_code, topup_code
-from ..services import admin_order_kb, apply_menu_button, any_method, money, receipt_caption, receipt_kb, user_link
+from ..services import (admin_order_kb, apply_menu_button, any_method, money, receipt_caption, receipt_kb,
+                        remember_admin_copy, user_link)
 from ..supplier import supplier
 from ..web import MEDIA_DIR
 from .admin import Broadcast, stats_text
@@ -120,9 +121,11 @@ async def send_receipt(message: Message, topup_id: int):
         caption += f"\n📝 {topup['reject_reason']}"
     markup = receipt_kb(topup_id) if topup["status"] in ("waiting", "review") else None
     if topup["receipt_file_id"]:
-        await message.answer_photo(topup["receipt_file_id"], caption=caption, reply_markup=markup)
+        sent = await message.answer_photo(topup["receipt_file_id"], caption=caption, reply_markup=markup)
     else:
-        await message.answer(caption, reply_markup=markup)
+        sent = await message.answer(caption, reply_markup=markup)
+    if markup:  # close this copy too when any admin handles the receipt
+        await remember_admin_copy(f"top:{topup_id}", sent)
 
 
 @router.callback_query(F.data.startswith("ap:r:"))
@@ -156,7 +159,9 @@ async def send_order(message: Message, order_id: int):
         text += f"\n📝 {order['note']}"
     rows = admin_order_kb(order_id).inline_keyboard if order["status"] == "processing" else []
     rows = [*rows, [B(text="👤 Муштарӣ", callback_data=f"ap:u:{order['user_id']}")]]
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    sent = await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    if order["status"] == "processing":
+        await remember_admin_copy(f"ord:{order_id}", sent)
 
 
 @router.callback_query(F.data.startswith("ap:o:"))

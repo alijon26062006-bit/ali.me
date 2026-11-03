@@ -62,6 +62,16 @@ CREATE TABLE IF NOT EXISTS notifications (
     is_read INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS admin_msgs (   -- every admin's copy of a receipt / order notice, to close them all at once
+    ref TEXT NOT NULL,              -- top:<id> | ord:<id>
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    photo INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS admin_msgs_ref ON admin_msgs (ref);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -284,6 +294,19 @@ class DB:
     async def receipt_duplicates(self, unique_id: str, exclude_id: int) -> list[dict]:
         return await self.fetchall("SELECT * FROM topups WHERE receipt_unique_id=? AND id<>? ORDER BY id",
                                    unique_id, exclude_id)
+
+    async def remember_admin_msg(self, ref: str, chat_id: int, message_id: int, body: str, photo: bool):
+        await self.execute("INSERT OR REPLACE INTO admin_msgs (ref, chat_id, message_id, body, photo, created_at)"
+                           " VALUES (?,?,?,?,?,?)", ref, chat_id, message_id, body, int(photo), now())
+
+    async def pop_admin_msgs(self, ref: str) -> list[dict]:
+        rows = await self.fetchall("SELECT * FROM admin_msgs WHERE ref=?", ref)
+        await self.execute("DELETE FROM admin_msgs WHERE ref=? OR created_at<?", ref, now() - 30 * 86400)
+        return rows
+
+    async def review_topup(self, user_id: int) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM topups WHERE user_id=? AND status='review' ORDER BY id LIMIT 1", user_id)
 
     async def count_topups(self, user_id: int, status: str | None = None, since: int = 0) -> int:
         sql, args = "SELECT COUNT(*) c FROM topups WHERE user_id=? AND created_at>=?", [user_id, since]

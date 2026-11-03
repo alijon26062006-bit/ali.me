@@ -203,6 +203,9 @@ async def receipt(message: Message, bot: Bot):
     except DuplicateReceipt as e:
         return await message.answer(t(user["lang"], "receipt_dup", code=e.code))
     if not topup:
+        pending = await db.review_topup(user["id"])
+        if pending:
+            return await message.answer(t(user["lang"], "receipt_in_review", code=topup_code(pending["id"])))
         return await message.answer(t(user["lang"], "receipt_no_request"))
     await message.answer(t(user["lang"], "receipt_received", code=topup_code(topup["id"])))
 

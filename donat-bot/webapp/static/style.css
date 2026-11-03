@@ -429,6 +429,14 @@ svg.i { width: 22px; height: 22px; flex: none; stroke: currentColor; fill: none;
 .sens-res { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 16px; }
 .sens-res .card { padding: 14px; }
 .sens-res .v { font-family: var(--display); font-size: 26px; font-weight: 800; color: var(--primary-text); }
+.sens-res .bar { height: 6px; border-radius: 99px; background: var(--surface-2); margin-top: 8px; overflow: hidden; }
+.sens-res .bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #7c3aed, #22d3ee); }
+.sens-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
+.sens-h { font-size: 16px; margin: 20px 0 8px; }
+.sens-ctrl .item b { color: var(--primary-text); font-size: 14px; text-align: right; }
+.sens-tips { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; line-height: 1.45; }
+.sens-actions { display: grid; gap: 10px; margin: 16px 0 90px; }
+.cta.ghost { background: var(--surface-2); color: var(--text); box-shadow: none; }
 .native-select { width: 100%; min-height: 56px; padding: 0 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); font-size: 16px; }
 .faq summary { cursor: pointer; font-weight: 700; padding: 16px; min-height: 56px; list-style: none; display: flex; justify-content: space-between; align-items: center; }
 .faq summary::-webkit-details-marker { display: none; }

@@ -18,6 +18,7 @@
     bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+    target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
     crosshair: '<circle cx="12" cy="12" r="10"/><path d="M22 12h-4M6 12H2M12 6V2M12 22v-4"/>',
     down: '<path d="m6 9 6 6 6-6"/>',
     right: '<path d="m9 18 6-6-6-6"/>',
@@ -111,7 +112,7 @@
     tj: {
       morning: "Субҳ ба хайр", day: "Рӯз ба хайр", evening: "Шом ба хайр", night: "Шаби хуш",
       balance: "Баланс", topup: "Пур кардан", history: "Таърих", search: "Бозиро ёбед...", inCatalog: "бозӣ дар каталог",
-      sensTitle: "Настройка ФФ «Ҳассосият»", sensSub: "Аз рӯи телефон ва соли барориш", free: "РОЙГОН",
+      sensTitle: "Настройка ФФ «Ҳассосият»", sensSub: "Headshot · Снайпер · 2026", free: "РОЙГОН",
       categories: "Категорияҳо", choose: "Бозиро интихоб кунед", buy: "Харидан", allGames: "Ҳамаи бозиҳо",
       home: "Асосӣ", purchases: "Харидҳо", support: "Дастгирӣ", profile: "Профил",
       multi: "Якчанд маҳсулот интихоб кардан", product: "Маҳсулот", gameId: "ID-и бозӣ", paste: "Гузоштан",
@@ -139,9 +140,21 @@
       faq2q: "Пароли аккаунт лозим аст?", faq2a: "Не. Танҳо ID-и бозӣ (UID) лозим аст. Ҳеҷ гоҳ паролро ба касе надиҳед.",
       faq3q: "Агар ID-ро хато ворид кунам?", faq3a: "Фавран ба дастгирӣ нависед. Агар донат ҳанӯз фиристода нашуда бошад, фармоишро ислоҳ мекунем.",
       faq4q: "Чӣ тавр пул пардохт кунам?", faq4a: "Алиф, Душанбе Сити, дигар бонкҳо, интиқол аз Русия ё банкомат. Расми чекро ба чати бот фиристед.",
-      sensInfo: "Танзимоти тавсияшавандаро аз рӯи телефони худ гиред", brand: "Бренди телефон", ram: "Хотираи амалиётӣ (RAM)",
+      sensInfo: "Услуб ва телефонатонро интихоб кунед — танзимоти навтарини 2026 барои headshot ва снайпер", brand: "Бренди телефон", ram: "Хотираи амалиётӣ (RAM)",
       year: "Соли барориш", generate: "Ҳисоб кардан", general: "Умумӣ", redDot: "Red Dot", scope2: "2x Scope", scope4: "4x Scope",
-      sniper: "Снайпер", freeLook: "Free Look", fireBtn: "Андозаи тугмаи оташ", dpi: "DPI (тавсия)",
+      sniper: "Снайпер (AWM)", freeLook: "Free Look", fireBtn: "Андозаи тугмаи оташ", dpi: "DPI (тавсия)",
+      sensStyle: "Услуби бозӣ", st_headshot: "Headshot", st_sniper: "Снайпер", st_balanced: "Мувозин",
+      tier_low: "телефони заиф", tier_mid: "телефони миёна", tier_high: "телефони тавоно",
+      controls: "Идоракунӣ (Controls)", aimPrecision: "Aim Precision", aim_default: "Default", aim_precise: "Precise on Scope",
+      holdScope: "Hold Fire to Scope", quickSwitch: "Quick Weapon Switch", leftFire: "Left Fire Button", leftFireVal: "Always",
+      fps: "Графика", fpsVal: "High FPS + Smooth", on: "Фаъол (On)", optional: "Ихтиёрӣ",
+      tipsTitle: "Маслиҳатҳо",
+      tips_headshot: "Ба сатҳи сина нишон гиред ва ҳангоми тир кашидан ангуштро кӯтоҳ ба боло кашед — дар сар бас кунед (drag headshot).|MP40 / M1887 барои drag headshot беҳтаранд.",
+      tips_sniper: "Пеш аз scope нишонро дар баландии сар нигоҳ доред.|Агар нишон аз ҳадаф мегузарад — «Снайпер»-ро 5–10 кам кунед.|Бо Quick Weapon Switch аз AWM ба M82B зуд гузаред.",
+      tips_balanced: "Барои ҳар ду услуб: аввал ҳамин рақамҳоро гузоред ва 2–3 бозӣ санҷед.",
+      tips_all: "Ҳар дафъа танҳо як слайдерро 5–10 воҳид иваз кунед ва 10–15 дақиқа дар Training санҷед.|Ҳар рӯз 10 дақиқа гармкунӣ дар Training.|Андозаи тугмаи оташ ва ҷойи тугмаҳоро зуд-зуд иваз накунед — одат муҳимтар аст.",
+      sensNote: "Ин рақамҳо нуқтаи оғоз мебошанд (Free Fire OB55, 2026, шкалаи 0–200), на қоидаи қатъӣ. Garena рақамҳои расмӣ намедиҳад.",
+      sensShare: "Ба дӯстон фиристодан", sensBuy: "Харидани алмаз", sensAd: "донати арзон ва зуд барои Free Fire 💎",
       selected: "Интихоб шуд", shareRef: "Даъват кардан", copyLink: "Нусха", terms: "Шартҳои истифода",
       termsText: "Пардохт пас аз тасдиқи чек ба баланс ворид мешавад. Фармоиш ба ID-е, ки шумо ворид кардед, фиристода мешавад — масъулияти дурустии ID бар дӯши харидор аст. Пас аз иҷро бозгашти пул имконнопазир аст. Агар фармоиш иҷро нашавад, маблағ ба баланс баргардонида мешавад.",
       payInBank: "Пардохт дар бонк", checking: "Санҷиши аккаунт…", accountNotFound: "Аккаунт бо ин ID ёфт нашуд", account: "Аккаунт", noMethods: "Ҳоло тарзи пардохт дастрас нест. Ба дастгирӣ нависед.", cats: "категория", noResults: "Ҳеҷ чиз ёфт нашуд", insufficient: "Баланс нокифоя — бонкро интихоб кунед",
@@ -149,7 +162,7 @@
     ru: {
       morning: "Доброе утро", day: "Добрый день", evening: "Добрый вечер", night: "Доброй ночи",
       balance: "Баланс", topup: "Пополнить", history: "История", search: "Найти игру...", inCatalog: "игр в каталоге",
-      sensTitle: "Настройка FF «Чувствительность»", sensSub: "По модели телефона и году выпуска", free: "БЕСПЛАТНО",
+      sensTitle: "Настройка FF «Чувствительность»", sensSub: "Headshot · Снайпер · 2026", free: "БЕСПЛАТНО",
       categories: "Категории", choose: "Выберите игру", buy: "Купить", allGames: "Все игры",
       home: "Главная", purchases: "Покупки", support: "Поддержка", profile: "Профиль",
       multi: "Выбрать несколько товаров", product: "Товар", gameId: "ID в игре", paste: "Вставить",
@@ -177,9 +190,21 @@
       faq2q: "Нужен пароль от аккаунта?", faq2a: "Нет. Нужен только игровой ID (UID). Никогда никому не сообщайте пароль.",
       faq3q: "Что если я ошибся в ID?", faq3a: "Сразу напишите в поддержку. Если донат ещё не отправлен — исправим заказ.",
       faq4q: "Как оплатить?", faq4a: "Алиф, Душанбе Сити, другие банки, перевод из России или банкомат. Отправьте фото чека в чат бота.",
-      sensInfo: "Получите рекомендуемые настройки под ваш телефон", brand: "Бренд телефона", ram: "Оперативная память (RAM)",
+      sensInfo: "Выберите стиль и телефон — актуальные настройки 2026 для headshot и снайпера", brand: "Бренд телефона", ram: "Оперативная память (RAM)",
       year: "Год выпуска", generate: "Рассчитать", general: "Общая", redDot: "Red Dot", scope2: "Прицел 2x", scope4: "Прицел 4x",
-      sniper: "Снайпер", freeLook: "Свободный обзор", fireBtn: "Размер кнопки огня", dpi: "DPI (рекомендация)",
+      sniper: "Снайпер (AWM)", freeLook: "Свободный обзор", fireBtn: "Размер кнопки огня", dpi: "DPI (рекомендация)",
+      sensStyle: "Стиль игры", st_headshot: "Headshot", st_sniper: "Снайпер", st_balanced: "Баланс",
+      tier_low: "слабый телефон", tier_mid: "средний телефон", tier_high: "мощный телефон",
+      controls: "Управление (Controls)", aimPrecision: "Aim Precision", aim_default: "Default", aim_precise: "Precise on Scope",
+      holdScope: "Hold Fire to Scope", quickSwitch: "Quick Weapon Switch", leftFire: "Left Fire Button", leftFireVal: "Always",
+      fps: "Графика", fpsVal: "High FPS + Smooth", on: "Вкл (On)", optional: "По желанию",
+      tipsTitle: "Советы",
+      tips_headshot: "Целься на уровень груди и при выстреле коротко веди палец вверх — останавливайся на голове (drag headshot).|Для drag headshot лучше всего MP40 / M1887.",
+      tips_sniper: "Держи прицел на высоте головы ещё до входа в scope.|Если прицел проскакивает цель — снизь «Снайпер» на 5–10.|Quick Weapon Switch — быстрый переход AWM ↔ M82B.",
+      tips_balanced: "Универсально: поставь эти цифры и проверь 2–3 матча.",
+      tips_all: "Меняй один ползунок за раз на 5–10 и проверяй 10–15 минут в Training.|Разминка 10 минут в Training каждый день.|Не меняй часто размер кнопки огня и раскладку — привычка важнее цифр.",
+      sensNote: "Это стартовые значения (Free Fire OB55, 2026, шкала 0–200), а не строгие правила. Официальных цифр Garena не даёт.",
+      sensShare: "Отправить друзьям", sensBuy: "Купить алмазы", sensAd: "дешёвый и быстрый донат для Free Fire 💎",
       selected: "Выбрано", shareRef: "Пригласить", copyLink: "Копировать", terms: "Условия использования",
       termsText: "Оплата зачисляется на баланс после проверки чека. Заказ отправляется на указанный вами ID — ответственность за правильность ID несёт покупатель. После выполнения возврат невозможен. Если заказ не выполнен, сумма возвращается на баланс.",
       payInBank: "Оплатить в банке", checking: "Проверяем аккаунт…", accountNotFound: "Аккаунт с таким ID не найден", account: "Аккаунт", noMethods: "Сейчас способы оплаты недоступны. Напишите в поддержку.", cats: "категорий", noResults: "Ничего не найдено", insufficient: "Недостаточно средств — выберите банк",
@@ -705,13 +730,23 @@
     } catch (e) { toast(e.message, true); }
   };
 
-  // ---- FF sensitivity generator
+  // ---- FF sensitivity guide (Free Fire OB55, 2026: sliders 0–200). Presets are the middle of the ranges most
+  // 2026 guides agree on; faster phones get lower values, and sniper scope is always the lowest slider.
   const BRANDS = ["Samsung", "Xiaomi / Redmi / POCO", "iPhone", "Tecno / Infinix", "Realme / OPPO", "Vivo", "Huawei / Honor", "Дигар"];
+  const SENS_KEYS = ["general", "redDot", "scope2", "scope4", "sniper", "freeLook"];
+  const SENS_PRESETS = {  // style -> tier -> [general, redDot, 2x, 4x, sniper, freeLook]
+    headshot: { low: [195, 190, 180, 165, 110, 155], mid: [185, 178, 165, 150, 100, 130], high: [160, 155, 145, 130, 90, 100] },
+    sniper:   { low: [190, 180, 170, 150, 100, 150], mid: [180, 170, 155, 135, 90, 125],  high: [155, 150, 135, 115, 78, 95] },
+    balanced: { low: [190, 185, 175, 160, 105, 150], mid: [180, 172, 160, 145, 95, 125],  high: [155, 150, 140, 125, 85, 95] },
+  };
+  const SENS_STYLES = [["headshot", "target"], ["sniper", "crosshair"], ["balanced", "sparkles"]];
   VIEWS.sens = () => {
-    const s = S.sens || (S.sens = store.get("sens", { brand: 0, ram: 4, year: 2022 }));
+    const s = S.sens || (S.sens = store.get("sens2", { brand: 0, ram: 4, year: 2023, style: "headshot" }));
     const years = []; for (let y = new Date().getFullYear(); y >= 2017; y--) years.push(y);
     return `${topbar(T("sensTitle"))}
       <p class="muted center" style="margin-top:0">${esc(T("sensInfo"))}</p>
+      <div class="label">${esc(T("sensStyle"))}</div>
+      <div class="seg">${SENS_STYLES.map(([k, ic]) => `<button class="${s.style === k ? "on" : ""}" data-sstyle="${k}">${icon(ic)}${esc(T("st_" + k))}</button>`).join("")}</div>
       <label class="label" for="s-brand">${esc(T("brand"))}</label>
       <select id="s-brand" class="native-select">${BRANDS.map((b, i) => `<option value="${i}" ${i === s.brand ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>
       <label class="label" for="s-ram">${esc(T("ram"))}</label>
@@ -722,17 +757,45 @@
       <div class="cta-bar"><button class="cta" data-act="sens">${icon("crosshair")}${esc(T("generate"))}</button></div>`;
   };
   function calcSens(s) {
-    // Heuristic: weaker / older devices need higher sensitivity to compensate for lower touch sampling.
-    const perf = Math.min(1, (s.ram / 12) * 0.6 + ((s.year - 2017) / 9) * 0.4);
-    const brandAdj = [2, 4, -6, 6, 3, 3, 1, 4][s.brand] || 0;
-    const base = Math.round(96 - perf * 18 + brandAdj);
-    const cap = (v) => Math.max(40, Math.min(100, Math.round(v)));
-    return { general: cap(base + 4), redDot: cap(base), scope2: cap(base - 4), scope4: cap(base - 8), sniper: cap(base - 38),
-             freeLook: cap(base - 20), fireBtn: Math.round(48 + (1 - perf) * 10), dpi: s.brand === 2 ? "—" : String(Math.round(400 + perf * 160)) };
+    const iphone = s.brand === 2;
+    // phone speed 0..1 from RAM and age; iPhones run FF smoother than Android phones with the same RAM
+    const perf = Math.min(1, (s.ram / 12) * 0.6 + ((s.year - 2017) / 9) * 0.4 + (iphone ? 0.15 : 0));
+    const tier = perf < 0.45 ? "low" : perf < 0.75 ? "mid" : "high";
+    const base = SENS_PRESETS[s.style] || SENS_PRESETS.headshot;
+    const shift = Math.round((({ low: 0.3, mid: 0.6, high: 0.9 })[tier] - perf) * 20);  // fine-tune inside the tier
+    const vals = base[tier].map((v, i) => Math.max(0, Math.min(200, v + (i === 5 ? 0 : shift))));
+    for (let i = 1; i < 5; i++) vals[i] = Math.min(vals[i], vals[i - 1]);  // general ≥ red dot ≥ 2x ≥ 4x ≥ sniper
+    const r = { tier, style: s.style };
+    SENS_KEYS.forEach((k, i) => { r[k] = vals[i]; });
+    r.fireBtn = s.style === "sniper" ? "45–50%" : tier === "low" ? "50–55%" : "45–55%";
+    r.aim = s.style === "sniper" ? "precise" : "default";
+    return r;
   }
-  const sensResult = (r) => `<div class="sens-res">${[["general", r.general], ["redDot", r.redDot], ["scope2", r.scope2], ["scope4", r.scope4], ["sniper", r.sniper],
-    ["freeLook", r.freeLook], ["fireBtn", r.fireBtn + "%"], ["dpi", r.dpi]].map(([k, v]) =>
-    `<div class="card"><div class="muted" style="font-size:13px;font-weight:600">${esc(T(k))}</div><div class="v">${esc(v)}</div></div>`).join("")}</div>`;
+  const sensResult = (r) => {
+    const rows = SENS_KEYS.map((k) => `<div class="card"><div class="muted" style="font-size:13px;font-weight:600">${esc(T(k))}</div>
+      <div class="v">${r[k]}</div><div class="bar"><i style="width:${(r[k] / 200) * 100}%"></i></div></div>`).join("");
+    const ctrl = [["aimPrecision", T("aim_" + r.aim)], ["fireBtn", r.fireBtn], ["holdScope", T(r.style === "sniper" ? "on" : "optional")],
+      ["quickSwitch", T("on")], ["leftFire", T("leftFireVal")], ["fps", T("fpsVal")]];
+    const tips = (T("tips_" + r.style) + "|" + T("tips_all")).split("|");
+    const ff = (S.boot.catalog || []).find((c) => /free ?fire/i.test(c.title || ""));
+    return `<div class="sens-head"><span class="chip">${icon("award")}${esc(T("st_" + r.style))}</span><span class="chip">${esc(T("tier_" + r.tier))}</span>
+        <span class="muted" style="font-size:12px">OB55 · 0–200</span></div>
+      <div class="sens-res">${rows}</div>
+      <h3 class="sens-h">${esc(T("controls"))}</h3>
+      <div class="list sens-ctrl">${ctrl.map(([k, v]) => `<div class="item"><span class="grow">${esc(T(k))}</span><b>${esc(v)}</b></div>`).join("")}</div>
+      <h3 class="sens-h">${esc(T("tipsTitle"))}</h3>
+      <ul class="sens-tips">${tips.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+      <p class="muted" style="font-size:12px">${esc(T("sensNote"))}</p>
+      <div class="sens-actions">
+        <button class="cta ghost" data-act="sens-share">${icon("share")}${esc(T("sensShare"))}</button>
+        ${ff ? `<button class="cta" data-go="#/cat/${ff.id}">${icon("gem")}${esc(T("sensBuy"))}</button>` : ""}
+      </div>`;
+  };
+  function sensShareText(r) {
+    return `🎯 ${T("sensTitle")} — ${T("st_" + r.style)} (${T("tier_" + r.tier)})\n` +
+      SENS_KEYS.map((k) => `• ${T(k)}: ${r[k]}`).join("\n") +
+      `\n• ${T("aimPrecision")}: ${T("aim_" + r.aim)}\n• ${T("fireBtn")}: ${r.fireBtn}\n\n💎 ${S.boot.shop_name} — ${T("sensAd")}`;
+  }
 
   // ------------------------------------------------------------------ sheets
   function openSheet(html, onMount) {
@@ -773,7 +836,7 @@
 
   // ------------------------------------------------------------------ events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-go],[data-back],[data-act],[data-tab],[data-cart],[data-prod],[data-info],[data-amount],[data-htab],[data-hfilter],[data-set],[data-link],[data-copy],[data-acc] > button");
+    const t = e.target.closest("[data-go],[data-back],[data-act],[data-tab],[data-cart],[data-prod],[data-info],[data-amount],[data-htab],[data-hfilter],[data-set],[data-link],[data-copy],[data-sstyle],[data-acc] > button");
     if (!t) return;
     if (t.matches("[data-acc] > button")) {
       const acc = t.parentElement; acc.classList.toggle("open"); t.setAttribute("aria-expanded", acc.classList.contains("open")); haptic(); return;
@@ -784,6 +847,13 @@
     if (d.link) { openLink(d.link); return; }
     if (d.copy) { copy(d.copy); return; }
     if (d.tab) { S.tab = d.tab; haptic(); render(); return; }
+    if (d.sstyle) {  // keep the phone picked so far, switch style and recalc if a result is shown
+      const s = S.sens;
+      s.style = d.sstyle;
+      ["brand", "ram", "year"].forEach((k) => { const el = document.getElementById("s-" + k); if (el) s[k] = Number(el.value); });
+      if (s.result) s.result = calcSens(s);
+      store.set("sens2", s); haptic(); render(); return;
+    }
     if (d.info) {
       e.stopPropagation();
       const [p, c] = productById(d.info);
@@ -850,13 +920,20 @@
           pinScreen(T("newPin"), async (pin) => { try { await api("/pin", { pin }); S.user.has_pin = true; render(); return true; } catch (err) { toast(err.message, true); return true; } });
         }
         break;
+      case "sens-share": {
+        const r = S.sens && S.sens.result;
+        if (!r) break;
+        const link = S.user.ref_link || `https://t.me/${S.boot.bot_username}`;
+        openLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(sensShareText(r))}`);
+        break;
+      }
       case "sens": {
         const s = S.sens;
         s.brand = Number(document.getElementById("s-brand").value);
         s.ram = Number(document.getElementById("s-ram").value);
         s.year = Number(document.getElementById("s-year").value);
         s.result = calcSens(s);
-        store.set("sens", s);
+        store.set("sens2", s);
         document.getElementById("sens-out").innerHTML = sensResult(s.result);
         document.getElementById("sens-out").scrollIntoView({ behavior: "smooth" });
         haptic("medium");
