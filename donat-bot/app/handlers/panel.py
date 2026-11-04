@@ -890,6 +890,8 @@ SETTING_PROMPTS = {
                     "Аввал ботро ба канал ҳамчун <b>админ</b> илова кунед, вагарна санҷида наметавонад."),
     "shop_name": "🏷 Номи нави мағоза (масалан <code>NEMAT DONAT</code>), то 32 ҳарф",
     "supplier_api_key": "🔑 Калиди нави Donatix API (<code>dx_live_…</code>). Паём баъд аз сабт нест карда мешавад.",
+    "glory_region": ("🛡 Регион барои ботҳои гилдия (ID аз рӯйхати Donatix).\n"
+                     "<code>auto</code> — бот худаш региони СНГ-ро меёбад."),
 }
 
 
@@ -905,7 +907,8 @@ def _settings_view() -> tuple[str, InlineKeyboardMarkup]:
             f"📞 Дастгирӣ: {config.support_url}\n"
             f"⭐ Канал/шарҳҳо: {config.reviews_url}\n"
             f"📢 Обунаи ҳатмӣ: {('✅ ' + o.get('sub_channel', '')) if sub_on and o.get('sub_channel') else '❌ хомӯш'}\n"
-            f"🔑 Donatix API: {('…' + key[-4:]) if key else 'нест'} · {supplier.name}")
+            f"🔑 Donatix API: {('…' + key[-4:]) if key else 'нест'} · {supplier.name}\n"
+            f"🛡 Региони ботҳои гилдия: {o.get('glory_region') or 'худкор (СНГ)'}")
     return text, kb(
         [B(text="📞 Дастгирӣ", callback_data="ap:sv:support_url"), B(text="⭐ Канал", callback_data="ap:sv:reviews_url")],
         [B(text="📢 Канали обуна", callback_data="ap:sv:sub_channel"),
@@ -913,7 +916,8 @@ def _settings_view() -> tuple[str, InlineKeyboardMarkup]:
         [B(text="🏷 Номи мағоза", callback_data="ap:sv:shop_name"),
          B(text="🪙 Тиинҳо: " + ("хомӯш кун" if cents else "фаъол кун"), callback_data="ap:cents")],
         [B(text="🛍 Мағоза: " + ("хомӯш кун" if config.menu_button else "фаъол кун"), callback_data="ap:menubtn")],
-        [B(text="🔑 Donatix API", callback_data="ap:sv:supplier_api_key")],
+        [B(text="🔑 Donatix API", callback_data="ap:sv:supplier_api_key"),
+         B(text="🛡 Регион · гилдия", callback_data="ap:sv:glory_region")],
         [BACK])
 
 
@@ -930,7 +934,15 @@ async def cb_setting_edit(call: CallbackQuery, state: FSMContext):
     key = call.data.split(":", 2)[2]
     await state.set_state(PanelInput.setting)
     await state.update_data(key=key)
-    await call.message.answer(SETTING_PROMPTS[key] + CANCEL_HINT)
+    extra = ""
+    if key == "glory_region" and supplier.enabled:  # show what Donatix offers right now
+        try:
+            items = (await supplier.request("GET", "/glory/regions")).get("items") or []
+            extra = "\n\n" + "\n".join(f"<code>{x.get('id')}</code> — {x.get('name', '')} ({x.get('price_tjs', '?')} см)"
+                                       for x in items[:40])
+        except Exception as e:
+            extra = f"\n\n⚠️ Donatix: {str(e)[:120]}"
+    await call.message.answer(SETTING_PROMPTS[key] + extra + CANCEL_HINT)
     await call.answer()
 
 
@@ -971,6 +983,10 @@ async def got_setting(message: Message, state: FSMContext, bot: Bot):
             return await message.answer(f"⚠️ Каналро ёфта натавонистам ё бот админ нест: {str(e)[:120]}")
         await db.set_setting("sub_channel", channel)
         await db.set_setting("sub_required", "1")
+    elif key == "glory_region":
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", value):
+            return await message.answer("ID-и регион нодуруст. Масалан <code>ru</code> ё <code>auto</code>")
+        await db.set_setting("glory_region", "" if value.lower() == "auto" else value)
     elif key == "supplier_api_key":
         try:
             await message.delete()  # don't leave the key in the chat

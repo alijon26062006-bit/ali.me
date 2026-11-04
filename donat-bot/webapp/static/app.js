@@ -143,6 +143,11 @@
       sensInfo: "Услуб ва телефонатонро интихоб кунед — танзимоти навтарини 2026 барои headshot ва снайпер", brand: "Бренди телефон", ram: "Хотираи амалиётӣ (RAM)",
       year: "Соли барориш", generate: "Ҳисоб кардан", general: "Умумӣ", redDot: "Red Dot", scope2: "2x Scope", scope4: "4x Scope",
       sniper: "Снайпер (AWM)", freeLook: "Free Look", fireBtn: "Андозаи тугмаи оташ", dpi: "DPI (тавсия)",
+      guildTitle: "Ботҳо барои гилдия · СНГ", guildSub: "Шӯҳрати гилдия · Free Fire СНГ",
+      guildHead: "Пеш аз харид гилдияро танзим кунед", guildIntro: "Дар бозӣ танзимоти гилдияро кушоед (мисли акс) ва дар қисми «МЕТОД ПОДТВЕРЖДЕНИЯ» чунин гузоред:",
+      guildDefault: "По умолчанию", guildWhy: "Ҳамин тавр ботҳо худашон ба гилдия дохил мешаванд. Дар гилдия бояд ҷойи холӣ бошад.",
+      guildWarn: "Агар танзимот дигар бошад, ботҳо ба гилдия дохил шуда наметавонанд.", guildRegion: "Регион: танҳо СНГ",
+      guildOk: "Фаҳмидам", clanId: "ID-и гилдия", clanPh: "Мисол: 3012345678",
       sensStyle: "Услуби бозӣ", st_headshot: "Headshot", st_sniper: "Снайпер", st_balanced: "Мувозин",
       tier_low: "телефони заиф", tier_mid: "телефони миёна", tier_high: "телефони тавоно",
       controls: "Идоракунӣ (Controls)", aimPrecision: "Aim Precision", aim_default: "Default", aim_precise: "Precise on Scope",
@@ -193,6 +198,11 @@
       sensInfo: "Выберите стиль и телефон — актуальные настройки 2026 для headshot и снайпера", brand: "Бренд телефона", ram: "Оперативная память (RAM)",
       year: "Год выпуска", generate: "Рассчитать", general: "Общая", redDot: "Red Dot", scope2: "Прицел 2x", scope4: "Прицел 4x",
       sniper: "Снайпер (AWM)", freeLook: "Свободный обзор", fireBtn: "Размер кнопки огня", dpi: "DPI (рекомендация)",
+      guildTitle: "Боты для гильдии · СНГ", guildSub: "Слава гильдии · Free Fire СНГ",
+      guildHead: "Перед покупкой настройте гильдию", guildIntro: "Откройте в игре настройки гильдии (как на фото) и в разделе «МЕТОД ПОДТВЕРЖДЕНИЯ» поставьте:",
+      guildDefault: "По умолчанию", guildWhy: "Тогда боты сами вступят в гильдию. В гильдии должно быть свободное место.",
+      guildWarn: "Если настройки другие, боты не смогут вступить в гильдию.", guildRegion: "Регион: только СНГ",
+      guildOk: "Я понял", clanId: "ID гильдии", clanPh: "Например: 3012345678",
       sensStyle: "Стиль игры", st_headshot: "Headshot", st_sniper: "Снайпер", st_balanced: "Баланс",
       tier_low: "слабый телефон", tier_mid: "средний телефон", tier_high: "мощный телефон",
       controls: "Управление (Controls)", aimPrecision: "Aim Precision", aim_default: "Default", aim_precise: "Precise on Scope",
@@ -281,6 +291,15 @@
   }
 
   const catById = (id) => S.catalog.find((c) => c.id === id);
+  // items that carry a Russian name (title_ru / subtitle_ru) show it to Russian-language users
+  function localizeCatalog() {
+    const swap = (o) => ["title", "subtitle"].forEach((k) => {
+      if (!o[k + "_ru"]) return;
+      if (o["_" + k] === undefined) o["_" + k] = o[k];
+      o[k] = LANG === "ru" ? o[k + "_ru"] : o["_" + k];
+    });
+    (S.catalog || []).forEach((c) => { swap(c); c.products.forEach(swap); });
+  }
   const productById = (id) => { for (const c of S.catalog) for (const p of c.products) if (p.id === id) return [p, c]; return [null, null]; };
 
   // ------------------------------------------------------------------ router
@@ -347,6 +366,8 @@
       <div id="search-results"></div>
       <button class="promo" data-go="#/sens"><span class="ring">${icon("crosshair")}</span>
         <span class="grow"><b>${esc(T("sensTitle"))}</b><span class="muted ellipsis">${esc(T("sensSub"))}</span></span><span class="btn-tag">${esc(T("free"))}</span></button>
+      ${catById("ff_guild") ? `<button class="promo" data-go="#/cat/ff_guild"><span class="ring">${icon("shield")}</span>
+        <span class="grow"><b>${esc(T("guildTitle"))}</b><span class="muted ellipsis">${esc(T("guildSub"))}</span></span><span class="btn-tag">${moneyText(catById("ff_guild").products[0].price)}</span></button>` : ""}
       <div class="section-title">${esc(T("categories"))}<small>${esc(T("choose"))}</small></div>
       ${featured.map(banner).join("")}
       ${groups.map(([g, list]) => g === "telegram" && list.length === 1
@@ -447,7 +468,7 @@
       : [{ key: "player_id", label: c ? c.uid_label : T("gameId"), placeholder: c ? c.uid_placeholder : "" }];
     co.fieldDefs = fields;
     co.fields = co.fields || {};
-    const f0 = fields[0];
+    const f0 = fields[0].key === "clan_id" ? { ...fields[0], label: T("clanId"), placeholder: T("clanPh") } : fields[0];
     if (!co.fields[f0.key] && co.uid) co.fields[f0.key] = co.uid;
     return `${topbar(T("checkout"))}
       <div class="summary"><span class="ic">${(() => {
@@ -458,7 +479,7 @@
         <span class="amt">${moneyHTML(total)}</span></div>
       <label class="label" for="uid">${esc(f0.label)}</label>
       <div class="field" id="uid-field">${icon(f0.key === "telegram_username" ? "send" : "hash")}<input id="uid" data-field="${esc(f0.key)}"
-        inputmode="${f0.key === "player_id" ? "numeric" : "text"}" autocomplete="off" placeholder="${esc(f0.placeholder)}" value="${esc(co.fields[f0.key] || "")}">
+        inputmode="${f0.key === "player_id" || f0.key === "clan_id" ? "numeric" : "text"}" autocomplete="off" placeholder="${esc(f0.placeholder)}" value="${esc(co.fields[f0.key] || "")}">
         <button class="ghost-btn" data-act="paste">${icon("clipboard")}${esc(T("paste"))}</button></div>
       <div id="uid-err"></div><div id="uid-nick">${nickHTML(co)}</div>
       ${fields.slice(1).map((f) => `<label class="label" for="f-${esc(f.key)}">${esc(f.label)}</label>
@@ -536,7 +557,8 @@
     const uid = (co.uid || "").trim();
     const f0 = co.fieldDefs[0];
     const okFirst = f0.key === "player_id" ? /^[A-Za-z0-9_-]{3,32}$/.test(uid)
-      : f0.key === "telegram_username" ? /^@?[A-Za-z0-9_]{4,32}$/.test(uid) : uid.length >= 3;
+      : f0.key === "telegram_username" ? /^@?[A-Za-z0-9_]{4,32}$/.test(uid)
+      : f0.key === "clan_id" ? /^\d{5,15}$/.test(uid.replace(/\s/g, "")) : uid.length >= 3;
     const missing = co.fieldDefs.slice(1).find((f) => !(co.fields[f.key] || "").trim());
     if (!okFirst || co.nick === false || missing) {
       document.getElementById("uid-field").classList.add("error");
@@ -797,6 +819,20 @@
       `\n• ${T("aimPrecision")}: ${T("aim_" + r.aim)}\n• ${T("fireBtn")}: ${r.fireBtn}\n\n💎 ${S.boot.shop_name} — ${T("sensAd")}`;
   }
 
+  function guideSheet(p, onOk) {
+    const row = (k, v) => `<li><span class="grow">${esc(k)}</span><b>${esc(v)}</b></li>`;
+    openSheet(`<div class="sheet-head"><h3>${esc(T("guildHead"))}</h3><button class="close-btn" data-close aria-label="Close">${icon("x")}</button></div>
+      <img class="guide-img" src="${esc(p.guide)}" alt="">
+      <p>${esc(T("guildIntro"))}</p>
+      <ul class="guide-list">${row("АВТО ПОДТВЕРЖДЕНИЕ", "ВКЛ.")}${row("УР.", T("guildDefault"))}${row("КБ-РЕЙТИНГ", T("guildDefault"))}${row("БО-РЕЙТИНГ", T("guildDefault"))}</ul>
+      <p class="muted">${esc(T("guildWhy"))}</p>
+      <p class="err-text">${esc(T("guildWarn"))}</p>
+      <p class="muted">🌍 ${esc(T("guildRegion"))} · ${esc(moneyText(p.price))}</p>
+      <button class="cta" data-guide-ok>${icon("check")}${esc(T("guildOk"))}</button>`, (wrap) => {
+      wrap.querySelector("[data-guide-ok]").addEventListener("click", () => { closeSheet(); haptic("medium"); onOk(); });
+    });
+  }
+
   // ------------------------------------------------------------------ sheets
   function openSheet(html, onMount) {
     $sheet.innerHTML = `<div class="sheet-wrap" data-close-bg><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
@@ -871,8 +907,13 @@
         haptic(); render(); return;
       }
       haptic("medium");
-      S.checkout = { cat: c.id, items: [{ product_id: pid, qty: 1 }], uid: store.get("uids", {})[c.id] || "", agree: store.get("agree", false) };
-      go("#/checkout");
+      const startCheckout = () => {
+        S.checkout = { cat: c.id, items: [{ product_id: pid, qty: 1 }], uid: store.get("uids", {})[c.id] || "", agree: store.get("agree", false) };
+        go("#/checkout");
+      };
+      const [prod] = productById(pid);
+      if (prod && prod.guide) { guideSheet(prod, startCheckout); return; }  // guild bots: how to set up the guild first
+      startCheckout();
       return;
     }
     if (d.amount) { S.topup.amount = Number(d.amount); haptic(); render(); return; }
@@ -880,7 +921,7 @@
     if (d.hfilter) { S.historyFilter = d.hfilter; render(); return; }
     if (d.set) {
       const [k, v] = d.set.split(":");
-      try { S.user = await api("/settings", { [k]: v }); LANG = S.user.lang; applyTheme(); render(); haptic(); } catch (err) { toast(err.message, true); }
+      try { S.user = await api("/settings", { [k]: v }); LANG = S.user.lang; localizeCatalog(); applyTheme(); render(); haptic(); } catch (err) { toast(err.message, true); }
       return;
     }
     switch (d.act) {
@@ -986,6 +1027,7 @@
     S.user = S.boot.user;
     S.catalog = S.boot.catalog;
     LANG = S.user.lang;
+    localizeCatalog();
     document.title = S.boot.shop_name;
     document.getElementById("splash-name").textContent = S.boot.shop_name;
     document.getElementById("splash-mark").textContent = shopMark();

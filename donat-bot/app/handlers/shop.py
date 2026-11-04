@@ -1,8 +1,10 @@
 """Buying inside the chat (without the Mini App): category -> product -> game ID -> payment method."""
+from pathlib import Path
+
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..catalog import GROUPS, get_catalog, get_product
 from ..config import config
@@ -13,6 +15,7 @@ from ..supplier import supplier
 from ..texts import t
 
 router = Router(name="shop")
+WEBAPP_DIR = Path(__file__).resolve().parents[2] / "webapp"
 B = InlineKeyboardButton
 
 
@@ -23,6 +26,10 @@ class Buy(StatesGroup):
 async def _user(tg_user) -> dict:
     user, _ = await db.upsert_user(tg_user.id, tg_user.username, tg_user.first_name)
     return user
+
+
+def _name(obj: dict, lang: str) -> str:
+    return obj.get("title_ru") or obj["title"] if lang == "ru" else obj["title"]
 
 
 def _group_title(group: str, lang: str) -> str:
@@ -40,7 +47,7 @@ async def cb_group(call: CallbackQuery, state: FSMContext):
     user = await _user(call.from_user)
     group = call.data[3:]
     cats = [c for c in await get_catalog() if c["group"] == group]
-    buttons = [B(text=c["title"], callback_data=f"sc:{c['id']}") for c in cats]
+    buttons = [B(text=_name(c, user["lang"]), callback_data=f"sc:{c['id']}") for c in cats]
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([B(text=f"⬅️ {t(user['lang'], 'btn_back')}", callback_data="m:donate")])
     await call.message.edit_text(t(user["lang"], "shop_group", title=_group_title(group, user["lang"])),
@@ -61,12 +68,12 @@ async def cb_category(call: CallbackQuery, state: FSMContext):
     if len(cat["tabs"]) > 1:
         rows.append([B(text=("✅ " if tb["id"] == tab else "") + tb["title"], callback_data=f"sc:{cat['id']}:{tb['id']}")
                      for tb in cat["tabs"]])
-    items = [B(text=f"{p['title']} — {money(p['price'])}", callback_data=f"sp:{cat['id']}:{i}")
+    items = [B(text=f"{_name(p, user['lang'])} — {money(p['price'])}", callback_data=f"sp:{cat['id']}:{i}")
              for i, p in enumerate(cat["products"]) if p["tab"] == tab]
     rows += [items[i:i + 2] for i in range(0, len(items), 2)] if len(items) > 6 else [[b] for b in items]
     back = f"sg:{cat['group']}" if cat["group"] not in ("featured", "telegram") else "m:donate"
     rows.append([B(text=f"⬅️ {t(user['lang'], 'btn_back')}", callback_data=back)])
-    await call.message.edit_text(t(user["lang"], "shop_choose_game", title=cat["title"]),
+    await call.message.edit_text(t(user["lang"], "shop_choose_game", title=_name(cat, user["lang"])),
                                  reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await call.answer()
 
@@ -74,14 +81,26 @@ async def cb_category(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("sp:"))
 async def cb_product(call: CallbackQuery, state: FSMContext):
     user = await _user(call.from_user)
-    _, cat_id, idx = call.data.split(":")
+    _, cat_id, idx, *ok = call.data.split(":")
     cat = next((c for c in await get_catalog() if c["id"] == cat_id), None)
     if not cat or not idx.isdigit() or int(idx) >= len(cat["products"]):
         return await call.answer(t(user["lang"], "shop_expired"), show_alert=True)
     product = cat["products"][int(idx)]
+    lang = user["lang"]
+    if product.get("guide") and not ok:  # how to set up the game first (guild bots), then "I understood"
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [B(text=t(lang, "guild_ok"), callback_data=f"sp:{cat_id}:{idx}:ok", style="success")],
+            [B(text=t(lang, "shop_cancel"), callback_data="sx")]])
+        await call.message.answer_photo(FSInputFile(WEBAPP_DIR / product["guide"].lstrip("/")),
+                                        caption=t(lang, "guild_guide", price=money(product["price"])), reply_markup=markup)
+        return await call.answer()
     await state.set_state(Buy.uid)
     await state.update_data(product_id=product["id"], cat_id=cat_id, fields={}, field_i=0)
-    await call.message.edit_text(_ask_text(user["lang"], product, 0), reply_markup=_cancel_kb(user["lang"]))
+    if ok:  # pressed under the photo: keep the instructions, ask in a new message
+        await call.message.edit_reply_markup(reply_markup=None)
+        await call.message.answer(_ask_text(lang, product, 0), reply_markup=_cancel_kb(lang))
+    else:
+        await call.message.edit_text(_ask_text(lang, product, 0), reply_markup=_cancel_kb(lang))
     await call.answer()
 
 
@@ -91,8 +110,11 @@ def _cancel_kb(lang: str) -> InlineKeyboardMarkup:
 
 def _ask_text(lang: str, product: dict, i: int) -> str:
     f = product["fields"][i]
-    return t(lang, "shop_ask_uid", product=product["title"], price=money(product["price"]),
-             uid_label=f["label"], placeholder=f["placeholder"])
+    label, placeholder = f["label"], f["placeholder"]
+    if f["key"] == "clan_id" and lang == "ru":
+        label, placeholder = "ID гильдии", "Например: 3012345678"
+    return t(lang, "shop_ask_uid", product=_name(product, lang), price=money(product["price"]),
+             uid_label=label, placeholder=placeholder)
 
 
 @router.message(Buy.uid, F.text & ~F.text.startswith("/") & ~F.text.endswith("Меню"))
@@ -112,7 +134,8 @@ async def got_uid(message: Message, state: FSMContext):
     try:  # validate everything typed so far
         clean = clean_fields([{"field_keys": [f["key"] for f in product["fields"][:i + 1]]}], fields, "")
     except ShopError:
-        return await message.answer(t(lang, "shop_bad_uid", uid_label=field["label"]))
+        label = "ID гильдии" if field["key"] == "clan_id" and lang == "ru" else field["label"]
+        return await message.answer(t(lang, "shop_bad_uid", uid_label=label))
     if i + 1 < len(product["fields"]):  # ask the next field (server, zone, …)
         await state.update_data(fields=clean, field_i=i + 1)
         return await message.answer(_ask_text(lang, product, i + 1), reply_markup=_cancel_kb(lang))
@@ -133,10 +156,12 @@ async def got_uid(message: Message, state: FSMContext):
     if not rows:
         await state.clear()
         return await message.answer(t(lang, "no_methods"))
-    rows.append([B(text=t(lang, "shop_change_uid"), callback_data=f"sp:{cat['id']}:{_index(cat, product['id'])}"),
+    change = f"sp:{cat['id']}:{_index(cat, product['id'])}" + (":ok" if product.get("guide") else "")  # no guide again
+    rows.append([B(text=t(lang, "shop_change_uid"), callback_data=change),
                  B(text=t(lang, "shop_cancel"), callback_data="sx")])
     shown = "\n".join(f"{f['label']}: {clean[f['key']]}" for f in product["fields"][1:])
-    text = t(lang, "shop_confirm", cat=cat["title"], product=product["title"], uid_label=product["fields"][0]["label"],
+    uid_label = "ID гильдии" if product["fields"][0]["key"] == "clan_id" and lang == "ru" else product["fields"][0]["label"]
+    text = t(lang, "shop_confirm", cat=_name(cat, lang), product=_name(product, lang), uid_label=uid_label,
              uid=next(iter(clean.values())) + (f"\n{shown}" if shown else ""), price=money(product["price"]),
              balance=money(user["balance"]))
     if nick:
@@ -170,5 +195,9 @@ async def cb_pay(call: CallbackQuery, state: FSMContext, bot: Bot):
 async def cb_cancel(call: CallbackQuery, state: FSMContext):
     user = await _user(call.from_user)
     await state.clear()
-    await call.message.edit_text(t(user["lang"], "shop_cancelled"))
+    if call.message.photo:  # cancelled under the guild instructions photo
+        await call.message.edit_reply_markup(reply_markup=None)
+        await call.message.answer(t(user["lang"], "shop_cancelled"))
+    else:
+        await call.message.edit_text(t(user["lang"], "shop_cancelled"))
     await call.answer()

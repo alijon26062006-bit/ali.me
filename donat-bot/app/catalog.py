@@ -135,6 +135,7 @@ FIELD_LABELS = {  # supplier field key -> (label, placeholder)
     "zone": ("Зона", "Зона / Zone ID"),
     "zone_id": ("Зона", "Зона / Zone ID"),
     "account": ("Почта ё логин", "example@mail.com"),
+    "clan_id": ("ID-и гилдия", "Мисол: 3012345678"),
 }
 
 
@@ -412,7 +413,21 @@ CATEGORY_BY_ID: dict[str, dict] = {}
 SOURCE = {"name": "static", "synced_at": 0}
 
 
+# Free Fire guild bots (Donatix /glory), CIS region only. Price is ours (an admin can change it in the price editor);
+# before buying the customer sees how the guild must be set up (webapp/static/guides/guild_settings.jpg).
+GUILD_CATEGORY = _cat("ff_guild", "Ботҳо барои гилдия · СНГ", "services", [{
+    "id": "ff_guild_cis", "tab": "main", "title": "Ботҳо барои гилдия · СНГ", "subtitle": "Шӯҳрати гилдия · Free Fire СНГ",
+    "title_ru": "Боты для гильдии · СНГ", "subtitle_ru": "Слава гильдии · Free Fire СНГ",
+    "price": 30.0, "sku": "glory:cis", "art": "voucher", "kind": "guild", "image": "/static/products/guild_bots.jpg",
+    "fields": [make_field("clan_id")], "guide": "/static/guides/guild_settings.jpg",
+}], short="ГБ", colors=("#f59e0b", "#7c2d12"), image="/static/products/guild_bots.jpg", title_ru="Боты для гильдии · СНГ",
+    uid_label="ID-и гилдия", uid_placeholder="Мисол: 3012345678")
+
+
 def set_active(categories: list[dict], source: str):
+    if not any(c["id"] == GUILD_CATEGORY["id"] for c in categories):  # right after the home-screen banners
+        at = sum(1 for c in categories if c["group"] == "featured")
+        categories = [*categories[:at], GUILD_CATEGORY, *categories[at:]]
     CATEGORIES[:] = categories
     PRODUCTS.clear()
     for c in categories:

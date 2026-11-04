@@ -52,6 +52,9 @@ def donate_menu(lang: str) -> InlineKeyboardMarkup:
     for cat in CATEGORIES:
         if cat["group"] == "featured":
             rows.append([InlineKeyboardButton(text=f"💎 {cat['title']}", callback_data=f"sc:{cat['id']}")])
+    if any(c["id"] == "ff_guild" for c in CATEGORIES):
+        rows.append([InlineKeyboardButton(text="🛡 " + ("Боты для гильдии · СНГ" if lang == "ru" else "Ботҳо барои гилдия · СНГ"),
+                                          callback_data="sc:ff_guild")])
     for group, icon, tj, ru in GROUP_BUTTONS:
         count = sum(1 for c in CATEGORIES if c["group"] == group)
         if count:

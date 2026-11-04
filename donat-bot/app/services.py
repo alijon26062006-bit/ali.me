@@ -171,7 +171,7 @@ async def build_items(raw_items: list[dict]) -> tuple[list[dict], float, str]:
         total += product["price"] * qty
     title = ", ".join(f"{i['title']}" + (f" ×{i['qty']}" if i["qty"] > 1 else "") for i in items)
     cat = CATEGORY_BY_ID.get(category)
-    if cat:
+    if cat and cat["title"] != title:
         title = f"{title} ({cat['title']})"
     return items, round(total, 2), title
 
@@ -187,13 +187,17 @@ def clean_fields(items: list[dict], fields: dict | None, game_uid: str) -> dict:
         if k == "telegram_username":
             v = "@" + v.lstrip("@")
             ok = re.fullmatch(r"@[A-Za-z0-9_]{4,32}", v)
+        elif k == "clan_id":
+            v = v.replace(" ", "")
+            ok = re.fullmatch(r"\d{5,15}", v)
         elif k == "player_id":
             v = v.replace(" ", "")
             ok = re.fullmatch(r"[A-Za-z0-9_-]{3,32}", v)
         else:
             ok = 1 <= len(v) <= 64
         if not ok:
-            raise ShopError("ID-и бозиро дуруст ворид кунед" if k == "player_id" else f"{k}: нодуруст")
+            raise ShopError({"player_id": "ID-и бозиро дуруст ворид кунед", "clan_id": "ID-и гилдияро дуруст ворид кунед (танҳо рақам)"}
+                            .get(k, f"{k}: нодуруст"))
         fields[k] = v
     return fields
 
@@ -373,7 +377,14 @@ async def start_fulfillment(bot: Bot, order_id: int, notify: bool = True):
     if nothing_sent and wrong_account:  # customer's typo: give the money back right away
         await db.set_order_status(order_id, "processing", note="wrong account")
         if await refund_order(bot, order_id, notify=False):
-            await notify_user(bot, order["user_id"], "order_wrong_account", code=code, uid=order["game_uid"])
+            key = "order_wrong_clan" if any(e.code == "invalid_clan_id" for e in errors) else "order_wrong_account"
+            await notify_user(bot, order["user_id"], key, code=code, uid=order["game_uid"])
+        return
+
+    if nothing_sent and any(e.code == "clan_busy" for e in errors):  # bots already work for this guild
+        await db.set_order_status(order_id, "processing", note="clan busy")
+        if await refund_order(bot, order_id, notify=False):
+            await notify_user(bot, order["user_id"], "order_clan_busy", code=code, uid=order["game_uid"])
         return
 
     if any(e.code == "insufficient_balance" for e in errors):  # not the buyer's problem: wait for top-up

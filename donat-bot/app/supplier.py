@@ -20,7 +20,11 @@ from .config import config
 log = logging.getLogger(__name__)
 
 # Donatix error codes that mean "the customer typed a wrong account" — refunded automatically.
-WRONG_ACCOUNT_CODES = {"player_not_found", "account_not_found", "invalid_field", "missing_field"}
+WRONG_ACCOUNT_CODES = {"player_not_found", "account_not_found", "invalid_field", "missing_field", "invalid_clan_id"}
+
+# Free Fire guild bots (Donatix /glory): our product sku is "glory:<region>", supplier order ids look like "gl-15"
+GLORY_PREFIX = "glory:"
+GLORY_REGION_WORDS = {"cis": ("cis", "ru", "rus", "russia", "снг", "россия")}
 
 
 @dataclass
@@ -189,9 +193,58 @@ class DonatixSupplier:
             return DeliveryResult("failed", ref, str(order.get("error") or "failed"))
         return DeliveryResult("pending", ref)
 
+    async def glory_region(self, want: str) -> str:
+        """Donatix region id for our region key (e.g. cis), from GET /glory/regions; an admin can force one
+        with the glory_region setting. Cached for an hour."""
+        forced = config.overrides.get("glory_region", "").strip()
+        if forced:
+            return forced
+        cached = getattr(self, "_glory_regions", None)
+        if not cached or cached[0] < time.time():
+            data = await self.request("GET", "/glory/regions")
+            self._glory_regions = cached = (time.time() + 3600, [x for x in data.get("items") or [] if isinstance(x, dict)])
+        words = GLORY_REGION_WORDS.get(want, (want,))
+        for item in cached[1]:
+            names = {str(item.get(k, "")).strip().lower() for k in ("id", "code", "name")}
+            if names & set(words) or any(w in n for n in names for w in words if len(w) > 3):
+                return str(item["id"])
+        return ""
+
+    @staticmethod
+    def _glory_parse(order: dict) -> DeliveryResult:
+        """Launched bots (running / already stopped) count as delivered: after the start the money is not returned."""
+        status = str(order.get("status", "")).lower()
+        ref = str(order.get("id") or "")
+        clan = order.get("clan") or {}
+        info = f"{clan.get('name', '')} · {order.get('bots', '?')} bot" if clan else ""
+        if status in ("running", "stopped"):
+            return DeliveryResult("done", ref, info)
+        if status == "failed":
+            return DeliveryResult("failed", ref, str(order.get("error") or "launch_failed"), "launch_failed")
+        return DeliveryResult("pending", ref)
+
+    async def _deliver_glory(self, sku: str, fields: dict, order_code: str) -> DeliveryResult:
+        clan_id = str(fields.get("clan_id") or next(iter(fields.values()), "")).strip()
+        await self.order_limit.acquire()
+        try:
+            region = await self.glory_region(sku[len(GLORY_PREFIX):])
+            if not region:
+                return DeliveryResult("failed", message="Donatix: регион барои ботҳои гилдия ёфт нашуд", code="invalid_region")
+            data = await self.request("POST", "/glory/orders", json={"region": region, "clan_id": clan_id},
+                                      idempotency_key=f"{order_code}-glory-{uuid.uuid4().hex[:12]}")
+            return self._glory_parse(data.get("order") or data)
+        except SupplierError as e:
+            log.warning("Donatix glory %s failed: %s (%s)", order_code, e, e.code)
+            return DeliveryResult("failed", message=str(e)[:300], code=e.code)
+        except Exception as e:
+            log.exception("Donatix glory %s", order_code)
+            return DeliveryResult("failed", message=f"network: {str(e)[:200]}", code="network")
+
     async def deliver(self, sku: str, fields: dict, quantity: int | None, order_code: str) -> DeliveryResult:
         if not sku:
             return DeliveryResult("manual", message="Product has no supplier product_id")
+        if sku.startswith(GLORY_PREFIX):
+            return await self._deliver_glory(sku, fields, order_code)
         body = {"product_id": sku, "fields": fields}
         if quantity:
             body["quantity"] = quantity
@@ -210,6 +263,9 @@ class DonatixSupplier:
     async def check(self, ref: str) -> DeliveryResult:
         await self.status_limit.acquire()
         try:
+            if ref.startswith("gl-"):
+                data = await self.request("GET", f"/glory/orders/{ref}")
+                return self._glory_parse(data.get("order") or {})
             data = await self.request("GET", f"/orders/{ref}")
             return self._parse(data.get("order") or {})
         except SupplierError as e:
@@ -221,6 +277,8 @@ class DonatixSupplier:
 
     async def check_account(self, sku: str, fields: dict) -> dict:
         """{'supported': bool, 'valid': bool, 'player_name': str}; cached 10 min to respect rate limits."""
+        if sku.startswith(GLORY_PREFIX):  # clans can't be checked in advance
+            return {"supported": False}
         key = (sku, tuple(sorted(fields.items())))
         cached = self._account_cache.get(key)
         if cached and cached[0] > time.time():
