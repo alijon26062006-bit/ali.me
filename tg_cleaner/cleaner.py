@@ -75,8 +75,12 @@ async def login_qr(client: TelegramClient, qr_png: str) -> None:
         log("\nОтсканируйте QR: Telegram на телефоне → Настройки → Устройства → "
             "Подключить устройство\n")
         img.print_ascii(invert=True)
-        img.make_image().save(qr_png)
-        log(f"\n(QR также сохранён в файл {qr_png}; действует ~30 секунд)")
+        try:
+            img.make_image().save(qr_png)
+            log(f"\n(QR также сохранён в файл {qr_png})")
+        except Exception:
+            pass  # Pillow не установлен — хватит QR в терминале
+        log("QR действует ~30 секунд. Жду сканирования…")
         try:
             await qr.wait(timeout=60)
             break
