@@ -293,7 +293,7 @@ async def sweep_loop(client, args, me) -> None:
                     continue
                 await wipe_entity(client, ent, args, me)
                 removed += 1
-                await asyncio.sleep(0.7)  # по-человечески, чтобы не словить FloodWait
+                await asyncio.sleep(0.05)  # маленькая пауза, FloodWait ловится ниже
             if removed:
                 log(f"   🔁 обход: убрано диалогов {removed}")
         except errors.FloodWaitError as e:
@@ -483,9 +483,9 @@ def parse_args():
                    help="какое устройство НЕ завершать (по умолчанию iPhone)")
     p.add_argument("--guard-interval", type=int, default=600,
                    help="как часто (сек) завершать чужие сессии (по умолчанию 600 = 10 мин)")
-    p.add_argument("--sweep-interval", type=int, default=20,
+    p.add_argument("--sweep-interval", type=float, default=0.5,
                    help="как часто (сек) обходить все диалоги и выходить из нового "
-                        "(по умолчанию 20)")
+                        "(по умолчанию 0.5 = полсекунды)")
     p.add_argument("--min-delay", type=float, default=1.5)
     p.add_argument("--max-delay", type=float, default=4.0)
     return p.parse_args()
