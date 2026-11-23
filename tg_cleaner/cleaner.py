@@ -24,6 +24,10 @@ from telethon.tl.types import Channel, Chat, User
 
 TELEGRAM_SERVICE_ID = 777000  # приходят коды входа — никогда не трогаем
 
+# Публичные ключи из открытого кода Telegram Desktop (github.com/telegramdesktop/tdesktop)
+PUBLIC_API_ID = 2040
+PUBLIC_API_HASH = "b18441a1ff607e10a989891a5462e627"
+
 
 def log(msg: str) -> None:
     print(msg, flush=True)
@@ -203,8 +207,13 @@ async def delete_account(client, args) -> None:
 # ---------------------------------------------------------------- main
 
 async def main(args) -> None:
-    api_id = args.api_id or os.getenv("TG_API_ID") or input("API_ID: ")
-    api_hash = args.api_hash or os.getenv("TG_API_HASH") or input("API_HASH: ")
+    api_id = args.api_id or os.getenv("TG_API_ID")
+    api_hash = args.api_hash or os.getenv("TG_API_HASH")
+    if not (api_id and api_hash):
+        # Публичные ключи официального Telegram Desktop (открытый исходный код).
+        # Нужны, если my.telegram.org не пускает ("too many tries").
+        api_id, api_hash = PUBLIC_API_ID, PUBLIC_API_HASH
+        log("API_ID не указан — использую публичные ключи Telegram Desktop.")
     client = TelegramClient(args.session, int(api_id), api_hash,
                             device_model="Account Cleaner", system_version="1.0")
     await client.connect()
