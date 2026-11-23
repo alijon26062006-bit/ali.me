@@ -57,11 +57,54 @@ async def safe(call, what: str, args):
 
 async def login_phone(client: TelegramClient, phone: str | None) -> None:
     phone = phone or input("Номер телефона (+998...): ").strip()
-    await client.start(
-        phone=phone,
-        code_callback=lambda: input("Код из Telegram/SMS: ").strip(),
-        password=lambda: getpass.getpass("Пароль 2FA (облачный пароль): "),
-    )
+    await client.send_code_request(phone)
+    try:
+        await client.sign_in(phone, input("Код из Telegram/SMS: ").strip())
+    except errors.SessionPasswordNeededError:
+        await enter_2fa(client)
+
+
+async def enter_2fa(client: TelegramClient) -> None:
+    """Ввод облачного пароля с повторами, подсказкой и восстановлением."""
+    info = await client(functions.account.GetPasswordRequest())
+    log("\nНужен облачный пароль (2FA).")
+    if info.hint:
+        log(f"   Подсказка к паролю: {info.hint}")
+    if info.has_recovery:
+        log(f"   Почта для восстановления: {info.email_unconfirmed_pattern or 'есть'}")
+    while True:
+        log("\n  1 — ввести пароль (ввод скрыт, символы не видны — это нормально)"
+            "\n  2 — восстановить через почту (код придёт на почту восстановления)"
+            "\n  3 — сбросить пароль (Telegram сбросит через 7 дней)"
+            "\n  0 — выход")
+        choice = input("Выбор: ").strip()
+        if choice == "1":
+            try:
+                await client.sign_in(password=getpass.getpass("Пароль 2FA: "))
+                return
+            except errors.PasswordHashInvalidError:
+                log("   ❌ Неверный пароль. Проверьте раскладку (RU/EN) и CapsLock.")
+            except errors.FloodWaitError as e:
+                log(f"   ⏳ Слишком много попыток, подождите {e.seconds} c.")
+        elif choice == "2":
+            try:
+                r = await client(functions.auth.RequestPasswordRecoveryRequest())
+                log(f"   Код отправлен на {r.email_pattern}")
+                code = input("   Код из письма: ").strip()
+                await client(functions.auth.RecoverPasswordRequest(code=code))
+                log("   ✅ Вход выполнен, облачный пароль снят. Потом поставьте новый!")
+                return
+            except errors.RPCError as e:
+                log(f"   ❌ {e.__class__.__name__}: {e}")
+        elif choice == "3":
+            try:
+                r = await client(functions.account.ResetPasswordRequest())
+                log(f"   Ответ Telegram: {r}")
+                log("   Если назначен сброс — запустите скрипт снова после указанной даты.")
+            except errors.RPCError as e:
+                log(f"   ❌ {e.__class__.__name__}: {e}")
+        elif choice == "0":
+            sys.exit("Выход.")
 
 
 async def login_qr(client: TelegramClient, qr_png: str) -> None:
@@ -87,7 +130,7 @@ async def login_qr(client: TelegramClient, qr_png: str) -> None:
         except asyncio.TimeoutError:
             log("QR устарел — генерирую новый…")
         except errors.SessionPasswordNeededError:
-            await client.sign_in(password=getpass.getpass("Пароль 2FA: "))
+            await enter_2fa(client)
             break
     if os.path.exists(qr_png):
         os.remove(qr_png)
