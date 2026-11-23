@@ -19,7 +19,7 @@ import os
 import random
 import sys
 
-from telethon import TelegramClient, errors, functions, password as pwd_mod
+from telethon import TelegramClient, errors, events, functions, password as pwd_mod
 from telethon.tl.types import Channel, Chat, User
 
 TELEGRAM_SERVICE_ID = 777000  # приходят коды входа — никогда не трогаем
@@ -253,6 +253,66 @@ async def delete_account(client, args) -> None:
 
 # ---------------------------------------------------------------- main
 
+async def wipe_entity(client, ent, args, me) -> None:
+    """Полностью убрать один диалог: удалить сообщения у всех и выйти/удалить."""
+    if isinstance(ent, User) and ent.id in (me.id, TELEGRAM_SERVICE_ID):
+        return
+    name = getattr(ent, "title", None) or getattr(ent, "first_name", "") or str(ent.id)
+    if isinstance(ent, (Channel, Chat)):
+        kind = "канал/группа"
+        # сначала стираем свои сообщения у всех, потом выходим
+        try:
+            ids = [m.id async for m in client.iter_messages(ent, from_user="me")]
+            if ids:
+                await safe(lambda: client.delete_messages(ent, ids, revoke=True),
+                           f"стирание сообщений в {name}", args)
+        except errors.RPCError:
+            pass
+        await safe(lambda: client.delete_dialog(ent), f"выход из {name}", args)
+    else:
+        kind = "бот" if getattr(ent, "bot", False) else "чат"
+        # delete_dialog с revoke в личке стирает переписку у обоих
+        await safe(lambda: client.delete_dialog(ent, revoke=True),
+                   f"удаление {name}", args)
+        if getattr(ent, "bot", False) and args.block_bots:
+            await safe(lambda: client(functions.contacts.BlockRequest(ent)),
+                       f"блокировка {name}", args)
+    log(f"   🧹 авто-очистка: {kind} «{str(name)[:40]}» убран(а) полностью")
+
+
+async def watch(client, args, me) -> None:
+    """Постоянное слежение: любое новое сообщение/вступление → удалить у всех и выйти."""
+    log("\n[WATCH] Слежение запущено. Любой новый канал, группа, чат, бот и любое "
+        "новое сообщение будут автоматически удалены у всех. Ctrl+C — стоп.")
+
+    async def handle(ent):
+        if ent is None:
+            return
+        if isinstance(ent, User) and ent.id in (me.id, TELEGRAM_SERVICE_ID):
+            return
+        await wipe_entity(client, ent, args, me)
+
+    @client.on(events.NewMessage)
+    async def _on_msg(event):
+        try:
+            # сперва стереть само сообщение у всех (вдруг чат оставляем недоступным)
+            await safe(lambda: event.delete(revoke=True), "удаление сообщения", args)
+            await handle(await event.get_chat())
+        except errors.RPCError as e:
+            log(f"   ⚠️ watch msg: {e.__class__.__name__}")
+
+    @client.on(events.ChatAction)
+    async def _on_action(event):
+        # нас добавили/мы вступили в канал или группу
+        try:
+            if event.user_added or event.user_joined or event.created:
+                await handle(await event.get_chat())
+        except errors.RPCError as e:
+            log(f"   ⚠️ watch action: {e.__class__.__name__}")
+
+    await client.run_until_disconnected()
+
+
 async def main(args) -> None:
     api_id = args.api_id or os.getenv("TG_API_ID")
     api_hash = args.api_hash or os.getenv("TG_API_HASH")
@@ -273,6 +333,11 @@ async def main(args) -> None:
             await login_phone(client, args.phone)
 
     me = await client.get_me()
+    if me is None:
+        log("❌ Не удалось войти: нет авторизации. Запустите вход заново "
+            "(python cleaner.py --login qr).")
+        await client.disconnect()
+        return
     log(f"\nВошли как: {me.first_name or ''} (@{me.username}) id={me.id}")
     if args.dry_run:
         log("РЕЖИМ ПРОСМОТРА (--dry-run): ничего не удаляется.")
@@ -291,9 +356,13 @@ async def main(args) -> None:
     if args.delete_account and not args.dry_run:
         await delete_account(client, args)
 
-    log("\nГотово. Обязательно: Настройки → Конфиденциальность → Облачный пароль "
-        "(включите/смените 2FA) и проверьте Устройства.")
-    await client.disconnect()
+    log("\nРазовая чистка завершена. Обязательно: Настройки → Конфиденциальность → "
+        "Облачный пароль (включите/смените 2FA) и проверьте Устройства.")
+
+    if args.watch and not args.dry_run:
+        await watch(client, args, me)
+    else:
+        await client.disconnect()
 
 
 def parse_args():
@@ -315,6 +384,9 @@ def parse_args():
                    help="не завершать чужие сессии")
     p.add_argument("--delete-account", action="store_true",
                    help="в конце удалить аккаунт полностью")
+    p.add_argument("--watch", action="store_true",
+                   help="после чистки остаться и авто-удалять всё новое (каналы, "
+                        "группы, чаты, ботов, сообщения) у всех, пока не остановишь")
     p.add_argument("--min-delay", type=float, default=1.5)
     p.add_argument("--max-delay", type=float, default=4.0)
     return p.parse_args()
