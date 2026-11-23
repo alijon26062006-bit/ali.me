@@ -280,10 +280,39 @@ async def wipe_entity(client, ent, args, me) -> None:
     log(f"   🧹 авто-очистка: {kind} «{str(name)[:40]}» убран(а) полностью")
 
 
-async def watch(client, args, me) -> None:
-    """Постоянное слежение: любое новое сообщение/вступление → удалить у всех и выйти."""
-    log("\n[WATCH] Слежение запущено. Любой новый канал, группа, чат, бот и любое "
-        "новое сообщение будут автоматически удалены у всех. Ctrl+C — стоп.")
+async def session_guard(client, args) -> None:
+    """Каждые N секунд завершает все чужие сессии, кроме текущей и разрешённого
+    устройства (по умолчанию iPhone). Так взломщик постоянно выкидывается."""
+    keep = (args.keep_device or "iPhone").lower()
+    while True:
+        try:
+            auths = (await client(functions.account.GetAuthorizationsRequest())).authorizations
+            for a in auths:
+                if a.current:
+                    continue
+                dev = f"{a.device_model} {a.platform} {a.system_version}".lower()
+                if keep and keep in dev:
+                    continue  # это ваше устройство (iPhone) — не трогаем
+                res = await safe(
+                    lambda a=a: client(functions.account.ResetAuthorizationRequest(a.hash)),
+                    f"завершение сессии {a.device_model} ({a.ip})", args)
+                if res:
+                    log(f"   🔒 завершена чужая сессия: {a.device_model} | "
+                        f"{a.app_name} | {a.ip} | {a.country}")
+        except errors.RPCError as e:
+            log(f"   ⚠️ сторож сессий: {e.__class__.__name__}: {e}")
+        await asyncio.sleep(args.guard_interval)
+
+
+_watch_ready = False
+
+
+def setup_watch(client, args, me) -> None:
+    """Регистрируем обработчики слежения ОДИН раз (переживают переподключения)."""
+    global _watch_ready
+    if _watch_ready:
+        return
+    _watch_ready = True
 
     async def handle(ent):
         if ent is None:
@@ -292,14 +321,22 @@ async def watch(client, args, me) -> None:
             return
         await wipe_entity(client, ent, args, me)
 
-    @client.on(events.NewMessage)
-    async def _on_msg(event):
+    async def kill_message(event):
+        # NewMessage без фильтра ловит и входящие, и ИСХОДЯЩИЕ (если взломщик
+        # пишет из аккаунта) — всё стирается у всех.
         try:
-            # сперва стереть само сообщение у всех (вдруг чат оставляем недоступным)
             await safe(lambda: event.delete(revoke=True), "удаление сообщения", args)
             await handle(await event.get_chat())
         except errors.RPCError as e:
             log(f"   ⚠️ watch msg: {e.__class__.__name__}")
+
+    @client.on(events.NewMessage)
+    async def _on_msg(event):
+        await kill_message(event)
+
+    @client.on(events.MessageEdited)
+    async def _on_edit(event):
+        await kill_message(event)
 
     @client.on(events.ChatAction)
     async def _on_action(event):
@@ -309,8 +346,6 @@ async def watch(client, args, me) -> None:
                 await handle(await event.get_chat())
         except errors.RPCError as e:
             log(f"   ⚠️ watch action: {e.__class__.__name__}")
-
-    await client.run_until_disconnected()
 
 
 async def main(args) -> None:
@@ -322,10 +357,17 @@ async def main(args) -> None:
         api_id, api_hash = PUBLIC_API_ID, PUBLIC_API_HASH
         log("API_ID не указан — использую публичные ключи Telegram Desktop.")
     client = TelegramClient(args.session, int(api_id), api_hash,
-                            device_model="Account Cleaner", system_version="1.0")
+                            device_model="Account Cleaner", system_version="1.0",
+                            connection_retries=None, retry_delay=5,
+                            auto_reconnect=True)
     await client.connect()
 
     if not await client.is_user_authorized():
+        if args.service or args.yes:
+            log("❌ Нет авторизации. Сначала войдите вручную один раз: "
+                "python cleaner.py --login qr")
+            await client.disconnect()
+            return
         method = args.login or input("Вход: 1 — по номеру, 2 — по QR: ").strip()
         if method in ("2", "qr"):
             await login_qr(client, args.qr_file)
@@ -341,26 +383,45 @@ async def main(args) -> None:
     log(f"\nВошли как: {me.first_name or ''} (@{me.username}) id={me.id}")
     if args.dry_run:
         log("РЕЖИМ ПРОСМОТРА (--dry-run): ничего не удаляется.")
-    else:
+    elif not (args.yes or args.service):
         if input('Будут удалены чаты, группы, каналы, боты и контакты.\n'
                  'Напишите "ДА" чтобы продолжить: ').strip().upper() not in ("ДА", "YES"):
             log("Отменено.")
             await client.disconnect()
             return
 
-    if not args.skip_sessions:
-        await kill_other_sessions(client, args)
-    await clean_dialogs(client, args, me)
-    if not args.keep_contacts:
-        await delete_contacts(client, args)
-    if args.delete_account and not args.dry_run:
-        await delete_account(client, args)
+    # В режиме службы разовый снос пропускаем (он уже был); только слежение.
+    if not args.service:
+        if not args.skip_sessions:
+            await kill_other_sessions(client, args)
+        await clean_dialogs(client, args, me)
+        if not args.keep_contacts:
+            await delete_contacts(client, args)
+        if args.delete_account and not args.dry_run:
+            await delete_account(client, args)
+        log("\nРазовая чистка завершена. Обязательно: Настройки → Конфиденциальность → "
+            "Облачный пароль (включите/смените 2FA) и проверьте Устройства.")
 
-    log("\nРазовая чистка завершена. Обязательно: Настройки → Конфиденциальность → "
-        "Облачный пароль (включите/смените 2FA) и проверьте Устройства.")
-
-    if args.watch and not args.dry_run:
-        await watch(client, args, me)
+    if (args.watch or args.service) and not args.dry_run:
+        setup_watch(client, args, me)
+        asyncio.create_task(session_guard(client, args))
+        log(f"\n[WATCH] Слежение 24/7 запущено. Любой новый канал, группа, чат, бот и "
+            f"любое новое сообщение (входящее и исходящее) удаляются у всех.\n"
+            f"[GUARD] Каждые {args.guard_interval} c завершаю все сессии, кроме "
+            f"'{args.keep_device}' и текущей. Ctrl+C — стоп.")
+        # Устойчивое слежение: при любом обрыве переподключаемся и продолжаем.
+        while True:
+            try:
+                if not client.is_connected():
+                    await client.connect()
+                await client.run_until_disconnected()
+            except KeyboardInterrupt:
+                break
+            except (ConnectionError, OSError, errors.RPCError) as e:
+                log(f"   ⚠️ обрыв связи: {e.__class__.__name__}. Переподключаюсь через 10 c…")
+                await asyncio.sleep(10)
+            else:
+                await asyncio.sleep(5)  # штатный дисконнект — пробуем вернуться
     else:
         await client.disconnect()
 
@@ -387,6 +448,15 @@ def parse_args():
     p.add_argument("--watch", action="store_true",
                    help="после чистки остаться и авто-удалять всё новое (каналы, "
                         "группы, чаты, ботов, сообщения) у всех, пока не остановишь")
+    p.add_argument("--service", action="store_true",
+                   help="режим службы 24/7: без вопросов, только постоянное слежение "
+                        "(нужен уже выполненный вход)")
+    p.add_argument("--yes", action="store_true",
+                   help="не спрашивать подтверждение (для автозапуска)")
+    p.add_argument("--keep-device", default="iPhone",
+                   help="какое устройство НЕ завершать (по умолчанию iPhone)")
+    p.add_argument("--guard-interval", type=int, default=600,
+                   help="как часто (сек) завершать чужие сессии (по умолчанию 600 = 10 мин)")
     p.add_argument("--min-delay", type=float, default=1.5)
     p.add_argument("--max-delay", type=float, default=4.0)
     return p.parse_args()

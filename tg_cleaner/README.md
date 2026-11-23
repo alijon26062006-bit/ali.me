@@ -72,3 +72,36 @@ python cleaner.py --login qr --block-bots --watch
 ```bash
 nohup python cleaner.py --block-bots --watch >> watch.log 2>&1 &
 ```
+
+## Работа 24/7 как служба (systemd) + сторож сессий
+Бот после входа:
+- **каждые 10 минут завершает ВСЕ чужие сессии**, кроме вашего iPhone и текущей —
+  взломщик постоянно выкидывается (`--keep-device iPhone`, `--guard-interval 600`);
+- **удаляет любое новое сообщение** — и входящее, и исходящее (если кто-то пишет
+  из аккаунта), и отредактированное;
+- выходит из любого нового канала/группы, удаляет новый чат/бота.
+
+### Установка (один раз войти, дальше работает само)
+```bash
+cd ~/ali.me/tg_cleaner
+python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
+python cleaner.py --login qr          # войти с iPhone по QR (один раз)
+./install_service.sh                  # поставить службу 24/7
+```
+Служба сама стартует после перезагрузки сервера и перезапускается при обрывах.
+
+| Команда | Что делает |
+|---|---|
+| `sudo systemctl status tg-cleaner` | статус |
+| `journalctl -u tg-cleaner -f` | живые логи |
+| `sudo systemctl stop tg-cleaner` | остановить |
+| `sudo systemctl disable --now tg-cleaner` | выключить совсем |
+
+Поменять оставляемое устройство или интервал — в файле `tg-cleaner.service`
+(строка `ExecStart`), например `--keep-device "iPhone 15" --guard-interval 300`.
+
+**Важно про завершение чужих сессий:** первые ~24 часа после входа Telegram
+запрещает завершать чужие сессии (`FRESH_RESET_AUTHORISATION_FORBIDDEN`). Сторож
+будет пытаться каждые 10 минут и начнёт реально выкидывать взломщика, как только
+Telegram это разрешит (примерно через сутки). До тех пор удаление сообщений,
+выход из каналов и удаление чатов уже работают.

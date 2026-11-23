@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram account cleaner (24/7 watch + session guard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/venv/bin/python __DIR__/cleaner.py --service --block-bots --revoke
+Restart=always
+RestartSec=10
+# держим бота живым даже после перезагрузки сервера
+
+[Install]
+WantedBy=multi-user.target
