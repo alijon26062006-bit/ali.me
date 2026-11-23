@@ -280,6 +280,29 @@ async def wipe_entity(client, ent, args, me) -> None:
     log(f"   🧹 авто-очистка: {kind} «{str(name)[:40]}» убран(а) полностью")
 
 
+async def sweep_loop(client, args, me) -> None:
+    """Постоянный обход: каждые N секунд пересматривает ВСЕ диалоги и убирает всё,
+    что не в белом списке. Нужно потому, что при подписке на канал Telegram не
+    присылает событие — иначе бот бы не заметил вступление."""
+    while True:
+        try:
+            removed = 0
+            async for d in client.iter_dialogs():
+                ent = d.entity
+                if isinstance(ent, User) and ent.id in (me.id, TELEGRAM_SERVICE_ID):
+                    continue
+                await wipe_entity(client, ent, args, me)
+                removed += 1
+                await asyncio.sleep(0.7)  # по-человечески, чтобы не словить FloodWait
+            if removed:
+                log(f"   🔁 обход: убрано диалогов {removed}")
+        except errors.FloodWaitError as e:
+            await asyncio.sleep(e.seconds + 5)
+        except errors.RPCError as e:
+            log(f"   ⚠️ обход: {e.__class__.__name__}: {e}")
+        await asyncio.sleep(args.sweep_interval)
+
+
 async def session_guard(client, args) -> None:
     """Каждые N секунд завершает все чужие сессии, кроме текущей и разрешённого
     устройства (по умолчанию iPhone). Так взломщик постоянно выкидывается."""
@@ -405,8 +428,11 @@ async def main(args) -> None:
     if (args.watch or args.service) and not args.dry_run:
         setup_watch(client, args, me)
         asyncio.create_task(session_guard(client, args))
+        asyncio.create_task(sweep_loop(client, args, me))
         log(f"\n[WATCH] Слежение 24/7 запущено. Любой новый канал, группа, чат, бот и "
             f"любое новое сообщение (входящее и исходящее) удаляются у всех.\n"
+            f"[SWEEP] Каждые {args.sweep_interval} c обхожу все диалоги и выхожу из "
+            f"всего нового (в т.ч. каналы при подписке).\n"
             f"[GUARD] Каждые {args.guard_interval} c завершаю все сессии, кроме "
             f"'{args.keep_device}' и текущей. Ctrl+C — стоп.")
         # Устойчивое слежение: при любом обрыве переподключаемся и продолжаем.
@@ -457,6 +483,9 @@ def parse_args():
                    help="какое устройство НЕ завершать (по умолчанию iPhone)")
     p.add_argument("--guard-interval", type=int, default=600,
                    help="как часто (сек) завершать чужие сессии (по умолчанию 600 = 10 мин)")
+    p.add_argument("--sweep-interval", type=int, default=20,
+                   help="как часто (сек) обходить все диалоги и выходить из нового "
+                        "(по умолчанию 20)")
     p.add_argument("--min-delay", type=float, default=1.5)
     p.add_argument("--max-delay", type=float, default=4.0)
     return p.parse_args()
